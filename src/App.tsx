@@ -272,8 +272,8 @@ export default function App() {
                 tabIndex={0}
                 title={box.locked ? "Já aberto" : "Clique para abrir"}
               >
-                <div style={styles.giftwrap}>
-                  <div style={styles.gift}>
+                <div className="giftwrap">
+                  <div className="gift">
                     <GiftSvg />
                   </div>
                   {box.locked && <div style={styles.lockedMark}>ABERTO</div>}
@@ -297,22 +297,25 @@ export default function App() {
           })}
         </section>
 
-        <section style={styles.panel}>
+        <section style={styles.panel} className="panel">
           <h2 style={styles.h2}>Seus dados</h2>
           <div style={styles.formRow}>
             <input
               placeholder="Seu nome"
               value={currentName}
               onChange={e => setCurrentName(e.target.value)}
+              className="responsive-input"
               style={styles.input}
             />
             <input
               placeholder="Telefone"
               value={currentPhone}
               onChange={e => setCurrentPhone(formatPhone(e.target.value))}
+              className="responsive-input"
               style={styles.input}
             />
             <button
+              className="responsive-button"
               style={{ ...styles.button, padding: '8px 10px' }}
               onClick={() => { setCurrentName(''); setCurrentPhone(''); showToast('Dados limpos.'); }}
             >Limpar</button>
@@ -325,16 +328,16 @@ export default function App() {
       </main>
 
       {modalOpen && (
-        <div style={styles.modalOverlay} onClick={closeModal}>
-          <div style={styles.modal} onClick={e => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 8px' }}>Revelar amigo — confirme seus dados</h3>
             <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-              <input placeholder="Seu nome" value={modalName} onChange={e => setModalName(e.target.value)} style={styles.input} />
-              <input placeholder="Telefone" value={modalPhone} onChange={e => setModalPhone(formatPhone(e.target.value))} style={styles.input} />
+              <input className="responsive-input" placeholder="Seu nome" value={modalName} onChange={e => setModalName(e.target.value)} style={styles.input} />
+              <input className="responsive-input" placeholder="Telefone" value={modalPhone} onChange={e => setModalPhone(formatPhone(e.target.value))} style={styles.input} />
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button style={{ ...styles.button, background: '#fffaf8' }} onClick={closeModal}>Cancelar</button>
-              <button style={{ ...styles.button, background: '#eaf6f0' }} onClick={confirmReveal}>Confirmar</button>
+            <div className="actions" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="responsive-button" style={{ ...styles.button, background: '#fffaf8' }} onClick={closeModal}>Cancelar</button>
+              <button className="responsive-button" style={{ ...styles.button, background: '#eaf6f0' }} onClick={confirmReveal}>Confirmar</button>
             </div>
             <p style={{ marginTop: 10, fontSize: 13, color: '#6b7280' }}>A pessoa só pode revelar uma vez; o nome do amigo fica privado.</p>
           </div>
