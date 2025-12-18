@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import './App.css';
 // serverless reveal removed; using client-side JSON + localStorage flow
+
+// Cores e emojis para caixinhas diferentes
+const giftColors = [
+  '#ffecec','#eaf6f0','#fff0e6','#f6efe9','#fef6f1','#ead2c0','#f6dcdc','#d6efe6','#fffefc','#f6f6f6',
+  '#f0e6ff','#e6f0ff','#e6fff0','#fffbe6','#ffe6fa','#e6ffe6','#e6faff','#f9e6ff','#e6fff9','#fff6e6'
+];
+const giftEmojis = [
+  '🍫','🍬','🍭','🍪','🍩','🍰','🧁','🍡','🍮','🍯','🍦','🍨','🍧','🥮','🍵','🍿','🥧','🍎','🍊','🍋','🍉','🍇','🍓','🍒'
+];
 import peopleJson from './data/people.json';
 
 type Box = {
@@ -22,8 +31,6 @@ type AppState = {
   availableSelectors?: string[];
 };
 
-// NOTE: For testing we keep state in-memory only (no persistence).
-
 const NAMES: string[] = (peopleJson as string[]);
 
 function pickRandom<T>(arr: T[]): T | null {
@@ -40,81 +47,54 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-
 function createInitialState(): AppState {
-  // load from localStorage if available
   try {
     const raw = localStorage.getItem('amigosecreto_state');
     if (raw) return JSON.parse(raw) as AppState;
-  } catch (e) {
-    // ignore
-  }
-
+  } catch (e) {}
   const boxes: Box[] = Array.from({ length: NAMES.length }, (_, i) => ({
     id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${i}`,
     revealedName: null,
     locked: false
   }));
-
   return {
     remainingNames: [...NAMES],
     boxes,
     revealedLog: [],
-    // usedPhones removed — no phone tracking
-    // who can still reveal (selectors)
-    // start with full participants list loaded from peopleJson
-    // stored in availableSelectors
-    // @ts-ignore - augment AppState at runtime
     availableSelectors: [...NAMES]
   };
 }
-
-// persistence removed for in-memory testing
+// Checa se o device já jogou (abriu uma caixa)
+function hasDevicePlayed(state: AppState): boolean {
+  const myName = localStorage.getItem('amigosecreto_my_name');
+  if (!myName) return false;
+  return state.revealedLog.some(r => r.revealerName === myName);
+}
 
 function GiftSvg() {
   return (
     <svg viewBox="0 0 360 220" width="100%" height="100%" aria-hidden="true">
-
       <ellipse cx="180" cy="206" rx="130" ry="12" fill="rgba(0,0,0,0.06)"></ellipse>
-
       <rect x="70" y="46" width="220" height="52" rx="14" fill="#ffecec"></rect>
       <rect x="70" y="46" width="220" height="52" rx="14" fill="rgba(255,255,255,0.22)"></rect>
-
       <rect x="80" y="90" width="200" height="110" rx="18" fill="#fff0e6"></rect>
       <rect x="80" y="90" width="200" height="110" rx="18" fill="rgba(255,255,255,0.28)"></rect>
-
       <rect x="170" y="46" width="20" height="154" rx="10" fill="#d6efe6"></rect>
       <rect x="170" y="46" width="20" height="154" rx="10" fill="rgba(255,255,255,0.12)"></rect>
-
       <rect x="70" y="118" width="220" height="20" rx="10" fill="#f6efe9"></rect>
       <rect x="70" y="118" width="220" height="20" rx="10" fill="rgba(255,255,255,0.10)"></rect>
-
-      <path
-        d="M180 44
-           C165 20, 125 24, 130 55
-           C135 85, 170 78, 180 60
-           C190 78, 225 85, 230 55
-           C235 24, 195 20, 180 44Z"
-        fill="#fff0f0"
-        stroke="rgba(0,0,0,0.04)"
-        strokeWidth="1.5"
-      ></path>
-
+      <path d="M180 44 C165 20, 125 24, 130 55 C135 85, 170 78, 180 60 C190 78, 225 85, 230 55 C235 24, 195 20, 180 44Z" fill="#fff0f0" stroke="rgba(0,0,0,0.04)" strokeWidth="1.5"></path>
       <rect x="110" y="138" width="140" height="46" rx="12" fill="#ead2c0"></rect>
       <rect x="118" y="146" width="124" height="30" rx="10" fill="rgba(255,255,255,0.14)"></rect>
-
       <g fill="rgba(255,255,255,0.14)">
         <rect x="125" y="150" width="28" height="10" rx="4"></rect>
         <rect x="158" y="150" width="28" height="10" rx="4"></rect>
         <rect x="191" y="150" width="28" height="10" rx="4"></rect>
-
         <rect x="125" y="164" width="28" height="10" rx="4"></rect>
         <rect x="158" y="164" width="28" height="10" rx="4"></rect>
         <rect x="191" y="164" width="28" height="10" rx="4"></rect>
       </g>
-      <text x="180" y="132" textAnchor="middle" fontSize="14" fontWeight="700" fill="#6b4b44" opacity="0.85">
-        CHOCOLATE
-      </text>
+      <text x="180" y="132" textAnchor="middle" fontSize="14" fontWeight="700" fill="#6b4b44" opacity="0.85">CHOCOLATE</text>
     </svg>
   );
 }
@@ -122,124 +102,79 @@ function GiftSvg() {
 export default function App() {
   const [state, setState] = useState<AppState>(() => createInitialState());
   const [toast, setToast] = useState<string>("");
-  const [currentName, setCurrentName] = useState<string>("");
-  const [initialSelectOpen, setInitialSelectOpen] = useState<boolean>(false);
-  const [modalOpen, setModalOpen] = useState<boolean>(false);
-  const [selectedBox, setSelectedBox] = useState<string | null>(null);
-  const [modalName, setModalName] = useState<string>("");
-  
+  // Remover setCurrentName não usado
+  const [currentName] = useState<string>(() => localStorage.getItem('amigosecreto_my_name') || "");
+  // Estado para mostrar seletor de nome se não definido
+  const showNameSelect = !localStorage.getItem('amigosecreto_my_name');
 
-  // state is intentionally kept in-memory for testing; no persistence effect.
+  function handleNameSelect(e: React.ChangeEvent<HTMLSelectElement>) {
+    const chosen = e.target.value;
+    if (!chosen) return;
+    localStorage.setItem('amigosecreto_my_name', chosen);
+    window.location.reload();
+  }
 
   const lockedCount = useMemo(() => state.boxes.filter(b => b.locked).length, [state.boxes]);
   const remainingCount = state.remainingNames.length;
 
   function showToast(msg: string) {
     setToast(msg);
-    // @ts-expect-error - propriedade auxiliar no function object (simples e suficiente aqui)
-    window.clearTimeout(showToast._t);
-    // @ts-expect-error - propriedade auxiliar no function object (simples e suficiente aqui)
-    showToast._t = window.setTimeout(() => setToast(""), 1700);
+    window.clearTimeout((showToast as any)._t);
+    (showToast as any)._t = window.setTimeout(() => setToast(""), 1700);
   }
 
+  // Não mostrar select de nome se já selecionado
+  useEffect(() => {
+    if (currentName) {
+      try { sessionStorage.setItem('amigosecreto_session_selected', '1'); } catch (e) {}
+    }
+  }, [currentName]);
+
+  // Ao clicar na caixinha, só abre se não estiver locked, não for a sua própria, e se usuário ainda não jogou
   function onBoxClick(boxId: string) {
-    // require user to select their name first
+    if (!currentName) {
+      showToast('Selecione seu nome antes de abrir uma caixinha.');
+      return;
+    }
     const box = state.boxes.find(b => b.id === boxId);
     if (!box || box.locked) {
       showToast("Este presente já foi aberto.");
       return;
     }
-
-    if (!currentName) {
-      showToast('Selecione seu nome antes de abrir uma caixinha.');
+    // Não pode abrir se já jogou
+    const jaJogou = state.revealedLog.some(r => r.revealerName === currentName);
+    if (jaJogou) {
+      showToast('Você já escolheu seu amigo!');
       return;
     }
-
-    setSelectedBox(boxId);
-    // prefill modal selector with current selected name
-    setModalName(currentName);
-    setModalOpen(true);
+    // Revela direto, sem modal de confirmação
+    confirmReveal(boxId);
   }
 
-  useEffect(() => {
-    try {
-      const sessionFlag = sessionStorage.getItem('amigosecreto_session_selected');
-      if (!sessionFlag) {
-        // open initial selector modal once per session
-        setInitialSelectOpen(true);
-      }
-    } catch (e) {
-      // ignore
-    }
-  }, []);
-
-  function confirmInitialSelect() {
-    if (!modalName && !currentName) {
-      showToast('Selecione seu nome para continuar.');
-      return;
-    }
-
-    const chosen = modalName || currentName;
-    setCurrentName(chosen);
-    try { sessionStorage.setItem('amigosecreto_session_selected', '1'); } catch (e) {}
-    setInitialSelectOpen(false);
-    showToast('Bem-vindo — você foi identificado nesta sessão.');
-  }
-
-  function closeModal() {
-    setModalOpen(false);
-    setSelectedBox(null);
-  }
-
-  
-
-  // phones removed from flow
-
-  function confirmReveal() {
-    if (!selectedBox) return;
-    // New client-side flow: pick selector (modalName) from availableSelectors
-    const selector = modalName.trim();
-    if (!selector) {
-      showToast('Selecione quem você é antes de confirmar.');
-      return;
-    }
-
+  // Revela amigo para a caixinha escolhida
+  function confirmReveal(boxId: string) {
+    const selector = currentName;
     setState(prev => {
-      const next = structuredClone(prev) as any as AppState & { availableSelectors?: string[] };
-      const available = (next.availableSelectors ?? [...NAMES]) as string[];
-      // choose a random name from remainingNames excluding the selector
+      const next = structuredClone(prev) as AppState & { availableSelectors?: string[] };
       const pool = next.remainingNames.filter((n: string) => n !== selector);
       const assigned = pickRandom(pool);
       if (!assigned) {
         showToast('Nenhum nome disponível para atribuir.');
         return prev;
       }
-
-      const box = next.boxes.find(b => b.id === selectedBox && !b.locked);
+      const box = next.boxes.find(b => b.id === boxId && !b.locked);
       if (!box) {
         showToast('Caixa já foi aberta.');
         return prev;
       }
-
       box.revealedName = assigned;
       box.locked = true;
       next.revealedLog.push({ boxId: box.id, name: assigned, revealerName: selector });
       next.remainingNames = next.remainingNames.filter((n: string) => n !== assigned);
-      next.availableSelectors = available.filter(s => s !== selector);
-
       try { localStorage.setItem('amigosecreto_state', JSON.stringify(next)); } catch (e) {}
       showToast('Presente revelado com sucesso.');
-      setCurrentName(selector);
-      closeModal();
       return next;
     });
-  }
-
-  function onReset() {
-    if (!confirm("Tem certeza que deseja resetar tudo?")) return;
-    try { localStorage.removeItem('amigosecreto_state'); } catch (e) {}
-    setState(createInitialState());
-    showToast("Reset completo. Lista reiniciada ao estado inicial.");
   }
 
   function onShuffle() {
@@ -251,28 +186,93 @@ export default function App() {
     showToast("Caixinhas embaralhadas.");
   }
 
+  // se já jogou
+  const played = hasDevicePlayed(state);
+  // Contagem de jogadas
+  const total = state.boxes.length;
+  const jogaram = state.revealedLog.length;
+  const faltam = total - jogaram;
+
+  // fundo azul clarinho e título destacado
   return (
-    <div style={styles.body}>
+    <div style={{
+      ...styles.body,
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #e3f0ff 0%, #b3d8ff 100%)',
+      backgroundAttachment: 'fixed',
+      position: 'relative'
+    }}>
+      {/* Efeito de neve natalina */}
+      <div style={{position:'fixed',zIndex:0,top:0,left:0,width:'100vw',height:'100vh',pointerEvents:'none',background:'repeating-linear-gradient(0deg,rgba(255,255,255,0.07),rgba(255,255,255,0.07) 2px,transparent 2px,transparent 8px)'}}></div>
+      {played && (
+        <div style={{background:'#ffecec',color:'#c0473d',padding:12,borderRadius:8,margin:'16px auto',maxWidth:420,textAlign:'center',fontWeight:500,boxShadow:'0 2px 12px #0001'}}>
+          Você já jogou!<br/>
+          <span style={{fontSize:14}}>Já jogaram: <b>{jogaram}</b> &nbsp;|&nbsp; Faltam: <b>{faltam}</b></span>
+        </div>
+      )}
       <header style={styles.header}>
         <div style={styles.title}>
-          <h1 style={styles.h1}>Amigo Secreto — Natal de Chocolate</h1>
-         
-        </div>
-
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" aria-hidden style={{filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.08))'}}>
-            <circle cx="12" cy="12" r="10" fill="#fef6f1" stroke="#f6dcdc"></circle>
-            <path d="M12 6v6l3 2" stroke="#c0473d" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </div>
-
-        <div style={styles.controls}>
-          <span style={styles.pill}>
-            Restantes: {remainingCount} | Revelados: {lockedCount}/{state.boxes.length}
-          </span>
-
-          <button style={styles.button} onClick={onReset}>Resetar tudo</button>
-          <button style={styles.button} onClick={onShuffle}>Embaralhar caixinhas</button>
+          {/* Header destacado com caixa de fundo */}
+          <div style={{
+            background: '#fff',
+            borderRadius: 18,
+            boxShadow: '0 2px 16px #0001',
+            padding: '18px 24px 12px 24px',
+            margin: '32px auto 24px auto',
+            maxWidth: 600,
+            border: '3px solid #b3d8ff',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 8
+          }}>
+            <h1 style={{
+              ...styles.h1,
+              color: '#1a2a3a',
+              textShadow: '0 2px 16px #b3d8ff88',
+              background: 'none',
+              WebkitBackgroundClip: 'unset',
+              WebkitTextFillColor: 'unset',
+              fontWeight: 800,
+              fontSize: 28,
+              letterSpacing: '-.01em',
+              padding: 0,
+              margin: 0
+            }}>
+              Amigo Secreto — Natal de Chocolate - Família Oliveira
+            </h1>
+            {showNameSelect ? (
+              <select
+                style={{marginTop:12,padding:'8px 16px',fontSize:16,borderRadius:10,border:'1px solid #b3d8ff'}}
+                defaultValue=""
+                onChange={handleNameSelect}
+              >
+                <option value="">Selecione quem você é...</option>
+                {NAMES.map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            ) : (
+              currentName && (
+                <div style={{color:'#1976d2',fontWeight:600,fontSize:18,marginTop:2}}>
+                  Você é: <span style={{color:'#c0473d'}}>{currentName}</span>
+                </div>
+              )
+            )}
+            <div style={{display:'flex',alignItems:'center',gap:16,marginTop:8}}>
+              <span style={{
+                background:'#e3f0ff',
+                color:'#1976d2',
+                borderRadius:12,
+                padding:'4px 14px',
+                fontWeight:600,
+                fontSize:16
+              }}>
+                Restantes: {remainingCount} | Revelados: {lockedCount}/{state.boxes.length}
+              </span>
+              <button style={{...styles.button,background:'#b3d8ff',color:'#1a2a3a',fontWeight:700}} onClick={onShuffle}>Embaralhar caixinhas</button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -281,9 +281,11 @@ export default function App() {
           {state.revealedLog.length === 0 ? (
             <div style={styles.revealedEmpty}>Ninguém abriu uma caixinha ainda</div>
           ) : (
-            state.revealedLog.map((r, i) => (
-              <div key={`${r.boxId}_${i}`} style={styles.revealerChip}>{r.revealerName ?? 'Anônimo'}</div>
-            ))
+            <>
+              {state.revealedLog.map(item => (
+                <div key={item.boxId} style={styles.revealerChip}>{item.revealerName ?? 'Anônimo'}</div>
+              ))}
+            </>
           )}
         </section>
 
@@ -295,14 +297,21 @@ export default function App() {
               <div
                 key={box.id}
                 style={{ ...styles.card, ...(box.locked ? styles.cardLocked : null) }}
-                onClick={() => !box.locked && onBoxClick(box.id)}
+                onClick={() => onBoxClick(box.id)}
                 role="button"
                 tabIndex={0}
-                title={box.locked ? "Já aberto" : "Clique para abrir"}
+                title={box.locked ? "Já aberto" : "Abrir presente"}
               >
                 <div className="giftwrap">
-                  <div className="gift">
-                    <GiftSvg />
+                  <div className="gift" style={{position:'relative',background:giftColors[state.boxes.indexOf(box)%giftColors.length],borderRadius:16}}>
+                    <GiftSvg key={box.id} />
+                    <div style={{
+                      position: 'absolute',
+                      top: 10,
+                      right: 10,
+                      fontSize: 22,
+                      opacity: 0.85
+                    }}>{giftEmojis[state.boxes.indexOf(box)%giftEmojis.length]}</div>
                   </div>
                   {box.locked && <div style={styles.lockedMark}>ABERTO</div>}
                 </div>
@@ -315,8 +324,8 @@ export default function App() {
                     </>
                   ) : (
                     <>
-                      <p style={styles.reveal}>{box.locked ? "Presente aberto (privado)" : "Clique para abrir 🎁"}</p>
-                      <p style={styles.hint}>{box.locked ? "O amigo é mostrado somente para quem abriu." : "Um clique abre uma caixinha e revela um amigo só para você."}</p>
+                      <p style={styles.reveal}>{box.locked ? "Presente aberto (privado)" : "Abrir presente 🎁"}</p>
+                      {/* Mensagem de instrução removida para produção */}
                     </>
                   )}
                 </div>
@@ -326,71 +335,25 @@ export default function App() {
         </section>
 
         <section style={styles.panel} className="panel">
-          <h2 style={styles.h2}>Seus dados</h2>
-          <div style={styles.formRow}>
-            <select
-              className="responsive-input"
-              style={styles.input}
-              value={currentName}
-              onChange={e => setCurrentName(e.target.value)}
-            >
-              <option value="">Selecione seu nome</option>
-              {(state.availableSelectors ?? NAMES).map(n => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-            <button
-              className="responsive-button"
-              style={{ ...styles.button, padding: '8px 10px' }}
-              onClick={() => { setCurrentName(''); showToast('Dados limpos.'); }}
-            >Limpar</button>
+          <h2 style={styles.h2}>Resultados</h2>
+          <div style={styles.revealedLog}>
+            {state.revealedLog.length === 0 && (
+              <div style={styles.revealedEmpty}>Ninguém abriu uma caixinha ainda</div>
+            )}
+            {state.revealedLog.map((item) => (
+              <div key={item.boxId} style={styles.revealedItem}>
+                <div style={styles.revealedName}>{item.revealerName ?? 'Anônimo'}</div>
+                <div style={styles.revealedArrow}>→</div>
+                <div style={styles.revealedName}>{item.name}</div>
+              </div>
+            ))}
           </div>
-          {/* Revealed list moved to top as chips */}
+          {/* Nota sobre privacidade */}
           <p style={styles.footerNote}>
-            Os resultados ficam salvos apenas em memória nesta sessão. Para reiniciar, use “Resetar tudo”.
+            Os resultados ficam salvos apenas em memória nesta sessão.
           </p>
         </section>
       </main>
-
-      {modalOpen && (
-        <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 8px' }}>Revelar amigo — confirme seus dados</h3>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-              <select className="responsive-input" style={styles.input} value={modalName} onChange={e => setModalName(e.target.value)}>
-                <option value="">Quem é você?</option>
-                {(state.availableSelectors ?? NAMES).map(n => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-            <div className="actions" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="responsive-button" style={{ ...styles.button, background: '#eaf6f0' }} onClick={confirmReveal}>Confirmar</button>
-            </div>
-            <p style={{ marginTop: 10, fontSize: 13, color: '#6b7280' }}>A pessoa só pode revelar uma vez; o nome do amigo fica privado.</p>
-          </div>
-        </div>
-      )}
-
-      {initialSelectOpen && (
-        <div className="modal-overlay" onClick={() => {}}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 8px' }}>Quem é você?</h3>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-              <select className="responsive-input" style={styles.input} value={modalName || currentName} onChange={e => setModalName(e.target.value)}>
-                <option value="">Selecione seu nome</option>
-                {(state.availableSelectors ?? NAMES).map(n => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-            <div className="actions" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="responsive-button" style={{ ...styles.button, background: '#eaf6f0' }} onClick={confirmInitialSelect}>Continuar</button>
-            </div>
-            <p style={{ marginTop: 10, fontSize: 13, color: '#6b7280' }}>Esta seleção aparece apenas uma vez por sessão.</p>
-          </div>
-        </div>
-      )}
 
       {toast && <div style={styles.toast}>{toast}</div>}
     </div>
@@ -548,5 +511,39 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 540,
     width: '100%',
   },
- 
+  revealedLog: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    padding: '12px 0',
+    borderTop: '1px solid #f4e7e0',
+    borderBottom: '1px solid #f4e7e0',
+    marginTop: 12,
+    color: '#1f2937',
+  },
+  revealedItem: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: '8px 0',
+    fontSize: 14,
+    fontWeight: 500,
+    position: 'relative',
+  },
+  revealedName: {
+    flex: 1,
+    textAlign: 'center',
+    padding: '0 8px',
+    borderRadius: 8,
+    background: 'linear-gradient(90deg,#e3f2fd,#e8f5e9)',
+    color: '#0d47a1',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+  },
+  revealedArrow: {
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    transform: 'translate(-50%, -50%)',
+    fontSize: 18,
+    color: '#6b7280',
+  },
 };
