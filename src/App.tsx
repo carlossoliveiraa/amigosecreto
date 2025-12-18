@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import './App.css';
 import { revealBox } from './api';
 
@@ -39,13 +39,6 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-function pickRandomAndRemove(list: string[]): string | null {
-  if (!list.length) return null;
-  const idx = Math.floor(Math.random() * list.length);
-  const item = list[idx];
-  list.splice(idx, 1);
-  return item;
-}
 
 function createInitialState(): AppState {
   const boxes: Box[] = Array.from({ length: NAMES.length }, (_, i) => ({
@@ -155,15 +148,7 @@ export default function App() {
     setSelectedBox(null);
   }
 
-  function maskPhone(p?: string) {
-    if (!p) return "";
-    const digits = p.replace(/\D/g, "");
-    if (!digits) return '';
-    if (digits.length <= 3) return digits.replace(/.(?=.{0,2}$)/g, '•');
-    // show last 4 digits
-    const last = digits.slice(-4);
-    return '•••' + last;
-  }
+  
 
   function formatPhone(input: string) {
     const d = input.replace(/\D/g, '');
@@ -512,16 +497,5 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 540,
     width: '100%',
   },
-  lockedMark: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    background: "#f7a8c4",
-    color: "#fff",
-    borderRadius: 999,
-    padding: "6px 10px",
-    fontSize: 12,
-    fontWeight: 700,
-    boxShadow: "0 8px 18px rgba(247,168,196,0.08)",
-  }
+ 
 };
