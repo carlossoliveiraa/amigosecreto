@@ -135,8 +135,9 @@ function GiftSvg() {
     window.location.reload();
   }
 
-  const lockedCount = useMemo(() => state.boxes.filter(b => b.locked).length, [state.boxes]);
-  const remainingCount = state.remainingNames.length;
+  // Contadores baseados no Supabase
+  const lockedCount = useMemo(() => people.filter(p => p.votou).length, [people]);
+  const remainingCount = useMemo(() => people.filter(p => !p.votou).length, [people]);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -302,7 +303,7 @@ function GiftSvg() {
                 fontWeight:600,
                 fontSize:16
               }}>
-                Restantes: {remainingCount} | Revelados: {lockedCount}/{state.boxes.length}
+                Restantes: {remainingCount} | Revelados: {lockedCount}/{people.length}
               </span>
               <button style={{...styles.button,background:'#b3d8ff',color:'#1a2a3a',fontWeight:700}} onClick={onShuffle}>Embaralhar caixinhas</button>
             </div>
@@ -361,10 +362,15 @@ function GiftSvg() {
           {state.boxes.map(box => {
             const log = state.revealedLog.find(r => r.boxId === box.id);
             const openedForMe = box.locked && log && log.revealerName && currentName && log.revealerName === currentName;
+            const isMyBox = log && log.revealerName === currentName;
             return (
               <div
                 key={box.id}
-                style={{ ...styles.card, ...(box.locked ? styles.cardLocked : null) }}
+                style={{
+                  ...styles.card,
+                  ...(box.locked ? styles.cardLocked : null),
+                  ...(isMyBox ? styles.cardSelected : null)
+                }}
                 onClick={() => onBoxClick(box.id)}
                 role="button"
                 tabIndex={0}
@@ -498,6 +504,12 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   cardLocked: { cursor: "default", opacity: 0.98, pointerEvents: 'none', border: '1px solid #d1f0df', background: '#f6fff7', boxShadow: 'inset 0 2px 0 rgba(31,95,58,0.02)' },
+  cardSelected: {
+    border: '3px solid #1976d2',
+    boxShadow: '0 0 0 3px #b3d8ff',
+    position: 'relative',
+    zIndex: 2,
+  },
   giftwrap: {
     height: 150,
     display: "flex",
