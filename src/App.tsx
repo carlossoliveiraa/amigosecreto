@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import './App.css';
-import { revealBox } from './api';
+// serverless reveal removed; using client-side JSON + localStorage flow
+import peopleJson from './data/people.json';
 
 type Box = {
   id: string;
@@ -12,23 +13,23 @@ type RevealedItem = {
   boxId: string;
   name: string;
   revealerName?: string | null;
-  revealerPhone?: string | null;
 };
 
 type AppState = {
   remainingNames: string[];
   boxes: Box[];
   revealedLog: RevealedItem[];
-  usedPhones?: Record<string, boolean>;
+  availableSelectors?: string[];
 };
 
 // NOTE: For testing we keep state in-memory only (no persistence).
 
-const NAMES: string[] = [
-  "Adilson","Beatriz","Beto","Carlinhos","Eduardo","Felipe","Gleice","Guilherme",
-  "Jessica","Joao Batista","Lais","Leonardo","Leticia","Luiza",
-  "Miguel","Moises","Murilo","Olga","Pri","Rosana","Solange","Vinicius"
-];
+const NAMES: string[] = (peopleJson as string[]);
+
+function pickRandom<T>(arr: T[]): T | null {
+  if (!arr || arr.length === 0) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -41,6 +42,14 @@ function shuffle<T>(arr: T[]): T[] {
 
 
 function createInitialState(): AppState {
+  // load from localStorage if available
+  try {
+    const raw = localStorage.getItem('amigosecreto_state');
+    if (raw) return JSON.parse(raw) as AppState;
+  } catch (e) {
+    // ignore
+  }
+
   const boxes: Box[] = Array.from({ length: NAMES.length }, (_, i) => ({
     id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${i}`,
     revealedName: null,
@@ -51,7 +60,12 @@ function createInitialState(): AppState {
     remainingNames: [...NAMES],
     boxes,
     revealedLog: [],
-    usedPhones: {}
+    // usedPhones removed — no phone tracking
+    // who can still reveal (selectors)
+    // start with full participants list loaded from peopleJson
+    // stored in availableSelectors
+    // @ts-ignore - augment AppState at runtime
+    availableSelectors: [...NAMES]
   };
 }
 
@@ -109,11 +123,10 @@ export default function App() {
   const [state, setState] = useState<AppState>(() => createInitialState());
   const [toast, setToast] = useState<string>("");
   const [currentName, setCurrentName] = useState<string>("");
-  const [currentPhone, setCurrentPhone] = useState<string>("");
+  const [initialSelectOpen, setInitialSelectOpen] = useState<boolean>(false);
   const [modalOpen, setModalOpen] = useState<boolean>(false);
   const [selectedBox, setSelectedBox] = useState<string | null>(null);
   const [modalName, setModalName] = useState<string>("");
-  const [modalPhone, setModalPhone] = useState<string>("");
   
 
   // state is intentionally kept in-memory for testing; no persistence effect.
@@ -130,17 +143,47 @@ export default function App() {
   }
 
   function onBoxClick(boxId: string) {
-    // open modal to input name/phone; prefill with panel values
+    // require user to select their name first
     const box = state.boxes.find(b => b.id === boxId);
     if (!box || box.locked) {
       showToast("Este presente já foi aberto.");
       return;
     }
 
+    if (!currentName) {
+      showToast('Selecione seu nome antes de abrir uma caixinha.');
+      return;
+    }
+
     setSelectedBox(boxId);
+    // prefill modal selector with current selected name
     setModalName(currentName);
-    setModalPhone(currentPhone);
     setModalOpen(true);
+  }
+
+  useEffect(() => {
+    try {
+      const sessionFlag = sessionStorage.getItem('amigosecreto_session_selected');
+      if (!sessionFlag) {
+        // open initial selector modal once per session
+        setInitialSelectOpen(true);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
+  function confirmInitialSelect() {
+    if (!modalName && !currentName) {
+      showToast('Selecione seu nome para continuar.');
+      return;
+    }
+
+    const chosen = modalName || currentName;
+    setCurrentName(chosen);
+    try { sessionStorage.setItem('amigosecreto_session_selected', '1'); } catch (e) {}
+    setInitialSelectOpen(false);
+    showToast('Bem-vindo — você foi identificado nesta sessão.');
   }
 
   function closeModal() {
@@ -150,68 +193,53 @@ export default function App() {
 
   
 
-  function formatPhone(input: string) {
-    const d = input.replace(/\D/g, '');
-    if (!d) return '';
-    // (XX) XXXXX-XXXX or adapt
-    if (d.length <= 2) return `(${d}`;
-    if (d.length <= 6) return `(${d.slice(0,2)}) ${d.slice(2)}`;
-    if (d.length <= 10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
-    return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7,11)}`;
-  }
+  // phones removed from flow
 
   function confirmReveal() {
     if (!selectedBox) return;
-    const name = modalName.trim();
-    const phone = modalPhone.trim();
-    if (!name || !phone) {
-      showToast("Nome e telefone são obrigatórios.");
+    // New client-side flow: pick selector (modalName) from availableSelectors
+    const selector = modalName.trim();
+    if (!selector) {
+      showToast('Selecione quem você é antes de confirmar.');
       return;
     }
 
-    // basic phone normalization: digits only, require at least 6 digits
-    const digits = phone.replace(/\D/g, '');
-    if (digits.length < 6) {
-      showToast('Telefone inválido (digite pelo menos 6 dígitos).');
-      return;
-    }
-
-    // call server-side reveal function (Edge Function). The server performs the random pick and persistence.
-    (async () => {
-      try {
-        const res = await revealBox(selectedBox, name, phone);
-        if (res.error) {
-          showToast(res.error);
-          return;
-        }
-
-        const assigned = res.assignedName ?? null;
-
-        setState(prev => {
-          const next = structuredClone(prev) as AppState;
-          const box = next.boxes.find(b => b.id === selectedBox);
-          if (!box) return prev;
-          box.revealedName = assigned;
-          box.locked = true;
-          next.revealedLog.push({ boxId: box.id, name: assigned ?? '', revealerName: name, revealerPhone: phone });
-          next.usedPhones = { ...(next.usedPhones ?? {}), [phone]: true };
-          return next;
-        });
-
-        setCurrentName(name);
-        setCurrentPhone(phone);
-        showToast('Caixinha selecionada. O nome foi retornado pelo servidor.');
-        closeModal();
-      } catch (err: any) {
-        showToast(err?.message || 'Erro ao revelar');
+    setState(prev => {
+      const next = structuredClone(prev) as any as AppState & { availableSelectors?: string[] };
+      const available = (next.availableSelectors ?? [...NAMES]) as string[];
+      // choose a random name from remainingNames excluding the selector
+      const pool = next.remainingNames.filter((n: string) => n !== selector);
+      const assigned = pickRandom(pool);
+      if (!assigned) {
+        showToast('Nenhum nome disponível para atribuir.');
+        return prev;
       }
-    })();
+
+      const box = next.boxes.find(b => b.id === selectedBox && !b.locked);
+      if (!box) {
+        showToast('Caixa já foi aberta.');
+        return prev;
+      }
+
+      box.revealedName = assigned;
+      box.locked = true;
+      next.revealedLog.push({ boxId: box.id, name: assigned, revealerName: selector });
+      next.remainingNames = next.remainingNames.filter((n: string) => n !== assigned);
+      next.availableSelectors = available.filter(s => s !== selector);
+
+      try { localStorage.setItem('amigosecreto_state', JSON.stringify(next)); } catch (e) {}
+      showToast('Presente revelado com sucesso.');
+      setCurrentName(selector);
+      closeModal();
+      return next;
+    });
   }
 
   function onReset() {
     if (!confirm("Tem certeza que deseja resetar tudo?")) return;
+    try { localStorage.removeItem('amigosecreto_state'); } catch (e) {}
     setState(createInitialState());
-    showToast("Reset concluído.");
+    showToast("Reset completo. Lista reiniciada ao estado inicial.");
   }
 
   function onShuffle() {
@@ -262,7 +290,7 @@ export default function App() {
         <section className="app-grid" style={styles.grid}>
           {state.boxes.map(box => {
             const log = state.revealedLog.find(r => r.boxId === box.id);
-            const openedForMe = box.locked && log && log.revealerPhone && currentPhone && log.revealerPhone === currentPhone;
+            const openedForMe = box.locked && log && log.revealerName && currentName && log.revealerName === currentName;
             return (
               <div
                 key={box.id}
@@ -300,24 +328,21 @@ export default function App() {
         <section style={styles.panel} className="panel">
           <h2 style={styles.h2}>Seus dados</h2>
           <div style={styles.formRow}>
-            <input
-              placeholder="Seu nome"
+            <select
+              className="responsive-input"
+              style={styles.input}
               value={currentName}
               onChange={e => setCurrentName(e.target.value)}
-              className="responsive-input"
-              style={styles.input}
-            />
-            <input
-              placeholder="Telefone"
-              value={currentPhone}
-              onChange={e => setCurrentPhone(formatPhone(e.target.value))}
-              className="responsive-input"
-              style={styles.input}
-            />
+            >
+              <option value="">Selecione seu nome</option>
+              {(state.availableSelectors ?? NAMES).map(n => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
             <button
               className="responsive-button"
               style={{ ...styles.button, padding: '8px 10px' }}
-              onClick={() => { setCurrentName(''); setCurrentPhone(''); showToast('Dados limpos.'); }}
+              onClick={() => { setCurrentName(''); showToast('Dados limpos.'); }}
             >Limpar</button>
           </div>
           {/* Revealed list moved to top as chips */}
@@ -332,14 +357,37 @@ export default function App() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 8px' }}>Revelar amigo — confirme seus dados</h3>
             <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-              <input className="responsive-input" placeholder="Seu nome" value={modalName} onChange={e => setModalName(e.target.value)} style={styles.input} />
-              <input className="responsive-input" placeholder="Telefone" value={modalPhone} onChange={e => setModalPhone(formatPhone(e.target.value))} style={styles.input} />
+              <select className="responsive-input" style={styles.input} value={modalName} onChange={e => setModalName(e.target.value)}>
+                <option value="">Quem é você?</option>
+                {(state.availableSelectors ?? NAMES).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
             </div>
             <div className="actions" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="responsive-button" style={{ ...styles.button, background: '#fffaf8' }} onClick={closeModal}>Cancelar</button>
               <button className="responsive-button" style={{ ...styles.button, background: '#eaf6f0' }} onClick={confirmReveal}>Confirmar</button>
             </div>
             <p style={{ marginTop: 10, fontSize: 13, color: '#6b7280' }}>A pessoa só pode revelar uma vez; o nome do amigo fica privado.</p>
+          </div>
+        </div>
+      )}
+
+      {initialSelectOpen && (
+        <div className="modal-overlay" onClick={() => {}}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 8px' }}>Quem é você?</h3>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <select className="responsive-input" style={styles.input} value={modalName || currentName} onChange={e => setModalName(e.target.value)}>
+                <option value="">Selecione seu nome</option>
+                {(state.availableSelectors ?? NAMES).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
+            <div className="actions" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="responsive-button" style={{ ...styles.button, background: '#eaf6f0' }} onClick={confirmInitialSelect}>Continuar</button>
+            </div>
+            <p style={{ marginTop: 10, fontSize: 13, color: '#6b7280' }}>Esta seleção aparece apenas uma vez por sessão.</p>
           </div>
         </div>
       )}
