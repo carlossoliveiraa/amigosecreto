@@ -10,7 +10,8 @@ const giftColors = [
 const giftEmojis = [
   '🍫','🍬','🍭','🍪','🍩','🍰','🧁','🍡','🍮','🍯','🍦','🍨','🍧','🥮','🍵','🍿','🥧','🍎','🍊','🍋','🍉','🍇','🍓','🍒'
 ];
-import peopleJson from './data/people.json';
+
+type Person = { name: string; votou: boolean };
 
 type Box = {
   id: string;
@@ -31,7 +32,10 @@ type AppState = {
   availableSelectors?: string[];
 };
 
-const NAMES: string[] = (peopleJson as string[]);
+
+export default function App() {
+  const [people, setPeople] = useState<Person[]>([]);
+  const NAMES: string[] = people.map(p => p.name);
 
 function pickRandom<T>(arr: T[]): T | null {
   if (!arr || arr.length === 0) return null;
@@ -47,21 +51,21 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-function createInitialState(): AppState {
+function createInitialState(names: string[]): AppState {
   try {
     const raw = localStorage.getItem('amigosecreto_state');
     if (raw) return JSON.parse(raw) as AppState;
   } catch (e) {}
-  const boxes: Box[] = Array.from({ length: NAMES.length }, (_, i) => ({
+  const boxes: Box[] = Array.from({ length: names.length }, (_, i) => ({
     id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${i}`,
     revealedName: null,
     locked: false
   }));
   return {
-    remainingNames: [...NAMES],
+    remainingNames: [...names],
     boxes,
     revealedLog: [],
-    availableSelectors: [...NAMES]
+    availableSelectors: [...names]
   };
 }
 // Checa se o device já jogou (abriu uma caixa)
@@ -99,8 +103,20 @@ function GiftSvg() {
   );
 }
 
-export default function App() {
-  const [state, setState] = useState<AppState>(() => createInitialState());
+  const [state, setState] = useState<AppState>(() => createInitialState([]));
+    // Carrega lista de pessoas da API ao iniciar
+    useEffect(() => {
+      fetch('/api/people')
+        .then(res => res.json())
+        .then((data: Person[]) => {
+          setPeople(data);
+          // Inicializa o estado do app se ainda não inicializado
+          setState(s => {
+            if (s.boxes.length === 0) return createInitialState(data.map(p => p.name));
+            return s;
+          });
+        });
+    }, []);
   const [toast, setToast] = useState<string>("");
   // Remover setCurrentName não usado
   const [currentName] = useState<string>(() => localStorage.getItem('amigosecreto_my_name') || "");
@@ -152,7 +168,7 @@ export default function App() {
   }
 
   // Revela amigo para a caixinha escolhida
-  function confirmReveal(boxId: string) {
+  async function confirmReveal(boxId: string) {
     const selector = currentName;
     setState(prev => {
       const next = structuredClone(prev) as AppState & { availableSelectors?: string[] };
@@ -172,6 +188,20 @@ export default function App() {
       next.revealedLog.push({ boxId: box.id, name: assigned, revealerName: selector });
       next.remainingNames = next.remainingNames.filter((n: string) => n !== assigned);
       try { localStorage.setItem('amigosecreto_state', JSON.stringify(next)); } catch (e) {}
+      // Atualiza status de votação na API
+      fetch('/api/people', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          people.map(p =>
+            p.name === selector ? { ...p, votou: true } : p
+          )
+        )
+      }).then(() => {
+        setPeople(ps => ps.map(p =>
+          p.name === selector ? { ...p, votou: true } : p
+        ));
+      });
       showToast('Presente revelado com sucesso.');
       return next;
     });
@@ -291,23 +321,22 @@ export default function App() {
           justifyContent: 'center',
         }}>
           <h3 style={{width:'100%',textAlign:'center',margin:'0 0 8px 0',fontSize:18,color:'#1976d2'}}>Participantes</h3>
-          {peopleJson.map((nome: string) => {
-            const jogou = state.revealedLog.some(r => r.revealerName === nome);
+          {people.map((p) => {
             return (
-              <span key={nome} style={{
+              <span key={p.name} style={{
                 padding: '6px 14px',
                 borderRadius: 8,
-                background: jogou ? '#b3d8ff' : '#e3f0ff',
-                color: jogou ? '#1976d2' : '#888',
-                fontWeight: jogou ? 700 : 400,
+                background: p.votou ? '#b3d8ff' : '#e3f0ff',
+                color: p.votou ? '#1976d2' : '#888',
+                fontWeight: p.votou ? 700 : 400,
                 fontSize: 15,
-                border: jogou ? '2px solid #1976d2' : '1px solid #b3d8ff',
-                opacity: jogou ? 1 : 0.7,
+                border: p.votou ? '2px solid #1976d2' : '1px solid #b3d8ff',
+                opacity: p.votou ? 1 : 0.7,
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
               }}>
-                {jogou ? '✔️' : '⏳'} {nome}
+                {p.votou ? '✔️' : '⏳'} {p.name}
               </span>
             );
           })}
