@@ -36,8 +36,10 @@ type AppState = {
 
 export default function App() {
   const [people, setPeople] = useState<Person[]>([]);
-  const NAMES: string[] = people.map(p => p.name);
 
+
+
+// pickRandom só deve ser usada em eventos, não no render
 function pickRandom<T>(arr: T[]): T | null {
   if (!arr || arr.length === 0) return null;
   return arr[Math.floor(Math.random() * arr.length)];
@@ -56,7 +58,9 @@ function createInitialState(names: string[]): AppState {
   try {
     const raw = localStorage.getItem('amigosecreto_state');
     if (raw) return JSON.parse(raw) as AppState;
-  } catch (e) {}
+  } catch {
+    // ignora erro
+  }
   const boxes: Box[] = Array.from({ length: names.length }, (_, i) => ({
     id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${i}`,
     revealedName: null,
@@ -141,14 +145,14 @@ function GiftSvg() {
 
   function showToast(msg: string) {
     setToast(msg);
-    window.clearTimeout((showToast as any)._t);
-    (showToast as any)._t = window.setTimeout(() => setToast(""), 1700);
+    window.clearTimeout((showToast as unknown as { _t: number })._t);
+    (showToast as unknown as { _t: number })._t = window.setTimeout(() => setToast(""), 1700);
   }
 
   // Não mostrar select de nome se já selecionado
   useEffect(() => {
     if (currentName) {
-      try { sessionStorage.setItem('amigosecreto_session_selected', '1'); } catch (e) {}
+      try { sessionStorage.setItem('amigosecreto_session_selected', '1'); } catch {}
     }
   }, [currentName]);
 
@@ -193,7 +197,7 @@ function GiftSvg() {
       box.locked = true;
       next.revealedLog.push({ boxId: box.id, name: assigned, revealerName: selector });
       next.remainingNames = next.remainingNames.filter((n: string) => n !== assigned);
-      try { localStorage.setItem('amigosecreto_state', JSON.stringify(next)); } catch (e) {}
+      try { localStorage.setItem('amigosecreto_state', JSON.stringify(next)); } catch {}
       // Atualiza status de votação no Supabase
       const person = people.find(p => p.name === selector);
       if (person) {
@@ -283,8 +287,8 @@ function GiftSvg() {
                 onChange={handleNameSelect}
               >
                 <option value="">Selecione quem você é...</option>
-                {NAMES.map(n => (
-                  <option key={n} value={n}>{n}</option>
+                {people.filter(p => !p.votou).map(p => (
+                  <option key={p.name} value={p.name}>{p.name}</option>
                 ))}
               </select>
             ) : (
