@@ -277,6 +277,41 @@ export default function App() {
       </header>
 
       <main style={styles.main}>
+        {/* Lista de todos os participantes, mostrando quem já jogou */}
+        <section style={{
+          background: '#fff',
+          borderRadius: 12,
+          boxShadow: '0 2px 12px #0001',
+          padding: '16px 20px',
+          margin: '0 auto 24px auto',
+          maxWidth: 480,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 10,
+          justifyContent: 'center',
+        }}>
+          <h3 style={{width:'100%',textAlign:'center',margin:'0 0 8px 0',fontSize:18,color:'#1976d2'}}>Participantes</h3>
+          {peopleJson.map((nome: string) => {
+            const jogou = state.revealedLog.some(r => r.revealerName === nome);
+            return (
+              <span key={nome} style={{
+                padding: '6px 14px',
+                borderRadius: 8,
+                background: jogou ? '#b3d8ff' : '#e3f0ff',
+                color: jogou ? '#1976d2' : '#888',
+                fontWeight: jogou ? 700 : 400,
+                fontSize: 15,
+                border: jogou ? '2px solid #1976d2' : '1px solid #b3d8ff',
+                opacity: jogou ? 1 : 0.7,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}>
+                {jogou ? '✔️' : '⏳'} {nome}
+              </span>
+            );
+          })}
+        </section>
         <section style={styles.revealedTop} aria-live="polite">
           {state.revealedLog.length === 0 ? (
             <div style={styles.revealedEmpty}>Ninguém abriu uma caixinha ainda</div>
