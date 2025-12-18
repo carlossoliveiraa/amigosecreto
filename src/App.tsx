@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { supabase } from "./supabaseClient";
 import './App.css';
 // serverless reveal removed; using client-side JSON + localStorage flow
 
@@ -11,7 +12,7 @@ const giftEmojis = [
   '🍫','🍬','🍭','🍪','🍩','🍰','🧁','🍡','🍮','🍯','🍦','🍨','🍧','🥮','🍵','🍿','🥧','🍎','🍊','🍋','🍉','🍇','🍓','🍒'
 ];
 
-type Person = { name: string; votou: boolean };
+type Person = { id: number; name: string; votou: boolean };
 
 type Box = {
   id: string;
@@ -104,18 +105,22 @@ function GiftSvg() {
 }
 
   const [state, setState] = useState<AppState>(() => createInitialState([]));
-    // Carrega lista de pessoas da API ao iniciar
+    // Carrega lista de pessoas do Supabase ao iniciar
     useEffect(() => {
-      fetch('/api/people')
-        .then(res => res.json())
-        .then((data: Person[]) => {
-          setPeople(data);
-          // Inicializa o estado do app se ainda não inicializado
+      async function fetchPeople() {
+        const { data, error } = await supabase
+          .from('people')
+          .select('*')
+          .order('id', { ascending: true });
+        if (!error && data) {
+          setPeople(data as Person[]);
           setState(s => {
-            if (s.boxes.length === 0) return createInitialState(data.map(p => p.name));
+            if (s.boxes.length === 0) return createInitialState((data as Person[]).map(p => p.name));
             return s;
           });
-        });
+        }
+      }
+      fetchPeople();
     }, []);
   const [toast, setToast] = useState<string>("");
   // Remover setCurrentName não usado
@@ -188,20 +193,19 @@ function GiftSvg() {
       next.revealedLog.push({ boxId: box.id, name: assigned, revealerName: selector });
       next.remainingNames = next.remainingNames.filter((n: string) => n !== assigned);
       try { localStorage.setItem('amigosecreto_state', JSON.stringify(next)); } catch (e) {}
-      // Atualiza status de votação na API
-      fetch('/api/people', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          people.map(p =>
-            p.name === selector ? { ...p, votou: true } : p
-          )
-        )
-      }).then(() => {
-        setPeople(ps => ps.map(p =>
-          p.name === selector ? { ...p, votou: true } : p
-        ));
-      });
+      // Atualiza status de votação no Supabase
+      const person = people.find(p => p.name === selector);
+      if (person) {
+        supabase
+          .from('people')
+          .update({ votou: true })
+          .eq('id', person.id)
+          .then(() => {
+            setPeople(ps => ps.map(p =>
+              p.name === selector ? { ...p, votou: true } : p
+            ));
+          });
+      }
       showToast('Presente revelado com sucesso.');
       return next;
     });
