@@ -9,13 +9,17 @@ const giftColors = [
   '#f0e6ff','#e6f0ff','#e6fff0','#fffbe6','#ffe6fa','#e6ffe6','#e6faff','#f9e6ff','#e6fff9','#fff6e6'
 ];
 
-type Person = { id: number; name: string; votou: boolean; sorteado: boolean };
+// Tabela "participantes"
+type Participante = { id: number; nome: string; votou: boolean };
 
-// Cada caixinha representa UMA pessoa do banco, em ordem aleatória
+// Tabela "sorteados"
+type Sorteado = { id: number; nome: string; sorteado: boolean };
+
+// Cada caixinha representa UMA pessoa da tabela "sorteados", em ordem aleatória
 type Box = {
   id: string;             // identificador visual da caixinha
-  personId: number;       // id da pessoa no Supabase (people.id)
-  personName: string;     // nome da pessoa no Supabase
+  personId: number;       // id da pessoa na tabela "sorteados"
+  personName: string;     // nome da pessoa na tabela "sorteados"
   revealedName: string | null;
   locked: boolean;
   sorteado?: boolean;     // indica se a caixinha já foi usada
@@ -36,13 +40,16 @@ type AppState = {
 
 
 export default function App() {
-  const [people, setPeople] = useState<Person[]>([]);
+  // participantes: quem pode jogar (dropdown)
+  const [participantes, setParticipantes] = useState<Participante[]>([]);
+  // sorteados: conjunto de pessoas disponíveis nas caixinhas
+  const [sorteados, setSorteados] = useState<Sorteado[]>([]);
   const [pendingPersonId, setPendingPersonId] = useState<number | null>(null);
   const [modalFriend, setModalFriend] = useState<string | null>(null);
 
-function createInitialStateFromPeople(people: Person[]): AppState {
+function createInitialStateFromSorteados(lista: Sorteado[]): AppState {
   // Embaralha as pessoas para que as caixinhas fiquem em ordem aleatória
-  const shuffled = [...people];
+  const shuffled = [...lista];
   for (let i = shuffled.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -51,13 +58,13 @@ function createInitialStateFromPeople(people: Person[]): AppState {
   const boxes: Box[] = shuffled.map((p, i) => ({
     id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${i}`,
     personId: p.id,
-    personName: p.name,
+    personName: p.nome,
     revealedName: null,
     locked: false,
     sorteado: false,
   }));
 
-  const names = shuffled.map((p) => p.name);
+  const names = shuffled.map((p) => p.nome);
 
   return {
     remainingNames: [...names],
@@ -94,28 +101,37 @@ function GiftSvg() {
   );
 }
 
-  const [state, setState] = useState<AppState>(() => createInitialStateFromPeople([]));
+  const [state, setState] = useState<AppState>(() => createInitialStateFromSorteados([]));
 
-  // Carrega lista de pessoas do Supabase ao iniciar
+  // Carrega listas do Supabase ao iniciar
   useEffect(() => {
-    async function fetchPeople() {
-      const { data, error } = await supabase
-        .from('people')
-        .select('*')
-        .order('id', { ascending: true });
-      if (!error && data) {
-        const peopleData = data as Person[];
-        setPeople(peopleData);
-        setState(s => {
-          if (s.boxes.length === 0) {
-            const availablePeople = peopleData.filter(p => !p.sorteado);
-            return createInitialStateFromPeople(availablePeople);
-          }
-          return s;
-        });
+    async function fetchInitialData() {
+      try {
+        const [{ data: participantesData, error: participantesError }, { data: sorteadosData, error: sorteadosError }] = await Promise.all([
+          supabase.from('participantes').select('id, nome, votou').order('id', { ascending: true }),
+          supabase.from('sorteados').select('id, nome, sorteado').order('id', { ascending: true }),
+        ]);
+
+        if (!participantesError && participantesData) {
+          setParticipantes(participantesData as Participante[]);
+        }
+
+        if (!sorteadosError && sorteadosData) {
+          const sorteadosList = sorteadosData as Sorteado[];
+          setSorteados(sorteadosList);
+          setState(s => {
+            if (s.boxes.length === 0) {
+              const disponiveis = sorteadosList.filter(p => !p.sorteado);
+              return createInitialStateFromSorteados(disponiveis);
+            }
+            return s;
+          });
+        }
+      } catch (error) {
+        console.error('Erro ao carregar participantes/sorteados:', error);
       }
     }
-    fetchPeople();
+    fetchInitialData();
   }, []);
   const [toast, setToast] = useState<string>("");
   const [currentName, setCurrentName] = useState<string>("");
@@ -134,48 +150,44 @@ function GiftSvg() {
   async function handleNameConfirm() {
     if (!pendingPersonId) return;
 
-    const person = people.find(p => p.id === pendingPersonId);
+    const person = participantes.find(p => p.id === pendingPersonId);
     if (!person) return;
 
-    setCurrentName(person.name);
+    setCurrentName(person.nome);
     setCurrentPersonId(person.id);
     setPendingPersonId(null);
 
     // Marca no banco que esta pessoa já "votou" (escolheu participar)
     try {
       await supabase
-        .from('people')
+        .from('participantes')
         .update({ votou: true })
         .eq('id', person.id);
 
-      // Em seguida faz GET para sincronizar dropdown e presentes com a base
+      // Em seguida faz GET em "participantes" para sincronizar dropdown e contadores
       const { data, error } = await supabase
-        .from('people')
-        .select('*')
+        .from('participantes')
+        .select('id, nome, votou')
         .order('id', { ascending: true });
 
       if (error || !data) {
-        console.error('Erro ao atualizar pessoas após confirmar nome:', error);
+        console.error('Erro ao atualizar participantes após confirmar nome:', error);
         return;
       }
 
-      const peopleData = data as Person[];
-      setPeople(peopleData);
-      setState(() => {
-        const availablePeople = peopleData.filter(p => !p.sorteado);
-        return createInitialStateFromPeople(availablePeople);
-      });
+      const participantesData = data as Participante[];
+      setParticipantes(participantesData);
     } catch (error) {
-      console.error('Erro inesperado ao atualizar pessoas após confirmar nome:', error);
+      console.error('Erro inesperado ao atualizar participantes após confirmar nome:', error);
     }
   }
 
   // Contadores baseados no Supabase
-  const remainingPlayers = useMemo(() => people.filter(p => !p.votou), [people]);
-  const lockedCount = useMemo(() => people.filter(p => p.votou).length, [people]);
+  const remainingPlayers = useMemo(() => participantes.filter(p => !p.votou), [participantes]);
+  const lockedCount = useMemo(() => participantes.filter(p => p.votou).length, [participantes]);
   const remainingCount = remainingPlayers.length;
   // Quantas pessoas ainda não foram sorteadas (para controlar exibição das caixinhas)
-  const remainingGifts = useMemo(() => people.filter(p => !p.sorteado).length, [people]);
+  const remainingGifts = useMemo(() => sorteados.filter(p => !p.sorteado).length, [sorteados]);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -233,13 +245,13 @@ function GiftSvg() {
       next.remainingNames = next.remainingNames.filter((n) => n !== assigned);
 
       // Atualiza status de "sorteado" no Supabase para o AMIGO SORTEADO (friendId)
-      // ou seja, quem está dentro da caixinha de presente
+      // na tabela "sorteados"
       supabase
-        .from('people')
+        .from('sorteados')
         .update({ sorteado: true })
         .eq('id', friendId)
         .then(() => {
-          setPeople(ps => ps.map(p =>
+          setSorteados(ps => ps.map(p =>
             p.id === friendId ? { ...p, sorteado: true } : p
           ));
         });
@@ -248,20 +260,20 @@ function GiftSvg() {
       return next;
     });
 
-      // Após atualizar o estado local, busca novamente a base para
-      // manter dropdown e caixas de presente 100% alinhados ao Supabase
+      // Após atualizar o estado local, busca novamente a base de "sorteados" para
+      // manter as caixinhas alinhadas ao Supabase (somente quem ainda não foi sorteado)
       try {
         const { data, error } = await supabase
-          .from('people')
-          .select('*')
+          .from('sorteados')
+          .select('id, nome, sorteado')
           .order('id', { ascending: true });
 
         if (!error && data) {
-          const peopleData = data as Person[];
-          setPeople(peopleData);
+          const sorteadosData = data as Sorteado[];
+          setSorteados(sorteadosData);
           setState(prev => {
-            const availablePeople = peopleData.filter(p => !p.sorteado);
-            const rebuilt = createInitialStateFromPeople(availablePeople);
+            const disponiveis = sorteadosData.filter(p => !p.sorteado);
+            const rebuilt = createInitialStateFromSorteados(disponiveis);
             // preserva o histórico já revelado nesta sessão
             return {
               ...rebuilt,
@@ -270,7 +282,7 @@ function GiftSvg() {
           });
         }
       } catch (error) {
-        console.error('Erro ao sincronizar pessoas e caixas após revelar amigo:', error);
+        console.error('Erro ao sincronizar sorteados e caixas após revelar amigo:', error);
       }
   }
 
@@ -323,8 +335,8 @@ function GiftSvg() {
                 onChange={handleNameChange}
               >
                 <option value="">Selecione quem você é...</option>
-                {people.filter(p => !p.votou).map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                {participantes.filter(p => !p.votou).map(p => (
+                  <option key={p.id} value={p.id}>{p.nome}</option>
                 ))}
               </select>
               <button
@@ -349,7 +361,7 @@ function GiftSvg() {
                 fontWeight:600,
                 fontSize:16
               }}>
-                Restantes: {remainingCount} | Revelados: {lockedCount}/{people.length}
+                Restantes: {remainingCount} | Revelados: {lockedCount}/{participantes.length}
               </span>
             </div>
           </div>
@@ -371,9 +383,9 @@ function GiftSvg() {
           justifyContent: 'center',
         }}>
           <h3 style={{width:'100%',textAlign:'center',margin:'0 0 8px 0',fontSize:18,color:'#1976d2'}}>Participantes</h3>
-          {people.map((p) => {
+          {participantes.map((p) => {
             return (
-              <span key={p.name} style={{
+              <span key={p.nome} style={{
                 padding: '6px 14px',
                 borderRadius: 8,
                 background: p.votou ? '#b3d8ff' : '#e3f0ff',
@@ -386,7 +398,7 @@ function GiftSvg() {
                 alignItems: 'center',
                 gap: 6,
               }}>
-                {p.votou ? '✔️' : '⏳'} {p.name}
+                {p.votou ? '✔️' : '⏳'} {p.nome}
               </span>
             );
           })}
