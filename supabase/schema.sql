@@ -16,6 +16,7 @@ create table if not exists boxes (
   id uuid primary key default gen_random_uuid(),
   revealed_name text,
   locked boolean default false,
+  sorteado boolean default false,
   created_at timestamptz default now()
 );
 

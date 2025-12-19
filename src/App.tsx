@@ -3,21 +3,22 @@ import { supabase } from "./supabaseClient";
 import './App.css';
 // serverless reveal removed; using client-side JSON + localStorage flow
 
-// Cores e emojis para caixinhas diferentes
+// Cores para caixinhas diferentes
 const giftColors = [
   '#ffecec','#eaf6f0','#fff0e6','#f6efe9','#fef6f1','#ead2c0','#f6dcdc','#d6efe6','#fffefc','#f6f6f6',
   '#f0e6ff','#e6f0ff','#e6fff0','#fffbe6','#ffe6fa','#e6ffe6','#e6faff','#f9e6ff','#e6fff9','#fff6e6'
 ];
-const giftEmojis = [
-  '🍫','🍬','🍭','🍪','🍩','🍰','🧁','🍡','🍮','🍯','🍦','🍨','🍧','🥮','🍵','🍿','🥧','🍎','🍊','🍋','🍉','🍇','🍓','🍒'
-];
 
-type Person = { id: number; name: string; votou: boolean };
+type Person = { id: number; name: string; votou: boolean; sorteado: boolean };
 
+// Cada caixinha representa UMA pessoa do banco, em ordem aleatória
 type Box = {
-  id: string;
+  id: string;             // identificador visual da caixinha
+  personId: number;       // id da pessoa no Supabase (people.id)
+  personName: string;     // nome da pessoa no Supabase
   revealedName: string | null;
   locked: boolean;
+  sorteado?: boolean;     // indica se a caixinha já foi usada
 };
 
 type RevealedItem = {
@@ -36,50 +37,35 @@ type AppState = {
 
 export default function App() {
   const [people, setPeople] = useState<Person[]>([]);
+  const [pendingPersonId, setPendingPersonId] = useState<number | null>(null);
+  const [modalFriend, setModalFriend] = useState<string | null>(null);
 
-
-
-// pickRandom só deve ser usada em eventos, não no render
-function pickRandom<T>(arr: T[]): T | null {
-  if (!arr || arr.length === 0) return null;
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
+function createInitialStateFromPeople(people: Person[]): AppState {
+  // Embaralha as pessoas para que as caixinhas fiquem em ordem aleatória
+  const shuffled = [...people];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  return a;
-}
 
-function createInitialState(names: string[]): AppState {
-  try {
-    const raw = localStorage.getItem('amigosecreto_state');
-    if (raw) return JSON.parse(raw) as AppState;
-  } catch {
-    // ignora erro
-  }
-  const boxes: Box[] = Array.from({ length: names.length }, (_, i) => ({
+  const boxes: Box[] = shuffled.map((p, i) => ({
     id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${i}`,
+    personId: p.id,
+    personName: p.name,
     revealedName: null,
-    locked: false
+    locked: false,
+    sorteado: false,
   }));
+
+  const names = shuffled.map((p) => p.name);
+
   return {
     remainingNames: [...names],
     boxes,
     revealedLog: [],
-    availableSelectors: [...names]
+    availableSelectors: [...names],
   };
 }
-// Checa se o device já jogou (abriu uma caixa)
-function hasDevicePlayed(state: AppState): boolean {
-  const myName = localStorage.getItem('amigosecreto_my_name');
-  if (!myName) return false;
-  return state.revealedLog.some(r => r.revealerName === myName);
-}
-
 function GiftSvg() {
   return (
     <svg viewBox="0 0 360 220" width="100%" height="100%" aria-hidden="true">
@@ -108,40 +94,88 @@ function GiftSvg() {
   );
 }
 
-  const [state, setState] = useState<AppState>(() => createInitialState([]));
-    // Carrega lista de pessoas do Supabase ao iniciar
-    useEffect(() => {
-      async function fetchPeople() {
-        const { data, error } = await supabase
-          .from('people')
-          .select('*')
-          .order('id', { ascending: true });
-        if (!error && data) {
-          setPeople(data as Person[]);
-          setState(s => {
-            if (s.boxes.length === 0) return createInitialState((data as Person[]).map(p => p.name));
-            return s;
-          });
-        }
-      }
-      fetchPeople();
-    }, []);
-  const [toast, setToast] = useState<string>("");
-  // Remover setCurrentName não usado
-  const [currentName] = useState<string>(() => localStorage.getItem('amigosecreto_my_name') || "");
-  // Estado para mostrar seletor de nome se não definido
-  const showNameSelect = !localStorage.getItem('amigosecreto_my_name');
+  const [state, setState] = useState<AppState>(() => createInitialStateFromPeople([]));
 
-  function handleNameSelect(e: React.ChangeEvent<HTMLSelectElement>) {
-    const chosen = e.target.value;
-    if (!chosen) return;
-    localStorage.setItem('amigosecreto_my_name', chosen);
-    window.location.reload();
+  // Carrega lista de pessoas do Supabase ao iniciar
+  useEffect(() => {
+    async function fetchPeople() {
+      const { data, error } = await supabase
+        .from('people')
+        .select('*')
+        .order('id', { ascending: true });
+      if (!error && data) {
+        const peopleData = data as Person[];
+        setPeople(peopleData);
+        setState(s => {
+          if (s.boxes.length === 0) {
+            const availablePeople = peopleData.filter(p => !p.sorteado);
+            return createInitialStateFromPeople(availablePeople);
+          }
+          return s;
+        });
+      }
+    }
+    fetchPeople();
+  }, []);
+  const [toast, setToast] = useState<string>("");
+  const [currentName, setCurrentName] = useState<string>("");
+  const [currentPersonId, setCurrentPersonId] = useState<number | null>(null);
+
+  function handleNameChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const value = e.target.value;
+    if (!value) {
+      setPendingPersonId(null);
+      return;
+    }
+    const id = Number(value);
+    setPendingPersonId(Number.isNaN(id) ? null : id);
+  }
+
+  async function handleNameConfirm() {
+    if (!pendingPersonId) return;
+
+    const person = people.find(p => p.id === pendingPersonId);
+    if (!person) return;
+
+    setCurrentName(person.name);
+    setCurrentPersonId(person.id);
+    setPendingPersonId(null);
+
+    // Marca no banco que esta pessoa já "votou" (escolheu participar)
+    try {
+      await supabase
+        .from('people')
+        .update({ votou: true })
+        .eq('id', person.id);
+
+      // Em seguida faz GET para sincronizar dropdown e presentes com a base
+      const { data, error } = await supabase
+        .from('people')
+        .select('*')
+        .order('id', { ascending: true });
+
+      if (error || !data) {
+        console.error('Erro ao atualizar pessoas após confirmar nome:', error);
+        return;
+      }
+
+      const peopleData = data as Person[];
+      setPeople(peopleData);
+      setState(() => {
+        const availablePeople = peopleData.filter(p => !p.sorteado);
+        return createInitialStateFromPeople(availablePeople);
+      });
+    } catch (error) {
+      console.error('Erro inesperado ao atualizar pessoas após confirmar nome:', error);
+    }
   }
 
   // Contadores baseados no Supabase
+  const remainingPlayers = useMemo(() => people.filter(p => !p.votou), [people]);
   const lockedCount = useMemo(() => people.filter(p => p.votou).length, [people]);
-  const remainingCount = useMemo(() => people.filter(p => !p.votou).length, [people]);
+  const remainingCount = remainingPlayers.length;
+  // Quantas pessoas ainda não foram sorteadas (para controlar exibição das caixinhas)
+  const remainingGifts = useMemo(() => people.filter(p => !p.sorteado).length, [people]);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -149,88 +183,96 @@ function GiftSvg() {
     (showToast as unknown as { _t: number })._t = window.setTimeout(() => setToast(""), 1700);
   }
 
-  // Não mostrar select de nome se já selecionado
+  // Fecha automaticamente a "página" após revelar o amigo
   useEffect(() => {
-    if (currentName) {
-      try { sessionStorage.setItem('amigosecreto_session_selected', '1'); } catch {}
-    }
-  }, [currentName]);
+    if (!modalFriend) return;
+    const timer = window.setTimeout(() => {
+      window.location.reload();
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [modalFriend]);
 
-  // Ao clicar na caixinha, só abre se não estiver locked, não for a sua própria, e se usuário ainda não jogou
-  function onBoxClick(boxId: string) {
-    if (!currentName) {
-      showToast('Selecione seu nome antes de abrir uma caixinha.');
-      return;
-    }
-    const box = state.boxes.find(b => b.id === boxId);
-    if (!box || box.locked) {
-      showToast("Este presente já foi aberto.");
-      return;
-    }
-    // Não pode abrir se já jogou
-    const jaJogou = state.revealedLog.some(r => r.revealerName === currentName);
-    if (jaJogou) {
-      showToast('Você já escolheu seu amigo!');
-      return;
-    }
-    // Revela direto, sem modal de confirmação
-    confirmReveal(boxId);
-  }
+  // Não mostrar select de nome se já selecionado (sessão desativada a pedido)
+  // useEffect(() => {
+  //   if (currentName) {
+  //     try { sessionStorage.setItem('amigosecreto_session_selected', '1'); } catch {}
+  //   }
+  // }, [currentName]);
 
   // Revela amigo para a caixinha escolhida
   async function confirmReveal(boxId: string) {
     const selector = currentName;
+    if (!selector || !currentPersonId) {
+      showToast('Selecione quem você é primeiro.');
+      return;
+    }
     setState(prev => {
       const next = structuredClone(prev) as AppState & { availableSelectors?: string[] };
-      const pool = next.remainingNames.filter((n: string) => n !== selector);
-      const assigned = pickRandom(pool);
-      if (!assigned) {
-        showToast('Nenhum nome disponível para atribuir.');
-        return prev;
-      }
       const box = next.boxes.find(b => b.id === boxId && !b.locked);
       if (!box) {
         showToast('Caixa já foi aberta.');
         return prev;
       }
+
+      // A caixinha sempre representa uma pessoa específica (personId/personName)
+      // Impede que alguém tire a si mesmo
+      if (box.personId === currentPersonId) {
+        showToast('Você não pode tirar você mesmo. Escolha outra caixinha.');
+        return prev;
+      }
+
+      const assigned = box.personName;
+      const friendId = box.personId;
+
       box.revealedName = assigned;
       box.locked = true;
+      box.sorteado = true; // marca como sorteado
+      next.boxes = next.boxes.filter(b => !b.sorteado); // remove da timeline
       next.revealedLog.push({ boxId: box.id, name: assigned, revealerName: selector });
-      next.remainingNames = next.remainingNames.filter((n: string) => n !== assigned);
-      try { localStorage.setItem('amigosecreto_state', JSON.stringify(next)); } catch {}
-      // Atualiza status de votação no Supabase
-      const person = people.find(p => p.name === selector);
-      if (person) {
-        supabase
-          .from('people')
-          .update({ votou: true })
-          .eq('id', person.id)
-          .then(() => {
-            setPeople(ps => ps.map(p =>
-              p.name === selector ? { ...p, votou: true } : p
-            ));
-          });
-      }
+      // Atualiza nomes restantes removendo o amigo sorteado
+      next.remainingNames = next.remainingNames.filter((n) => n !== assigned);
+
+      // Atualiza status de "sorteado" no Supabase para o AMIGO SORTEADO (friendId)
+      // ou seja, quem está dentro da caixinha de presente
+      supabase
+        .from('people')
+        .update({ sorteado: true })
+        .eq('id', friendId)
+        .then(() => {
+          setPeople(ps => ps.map(p =>
+            p.id === friendId ? { ...p, sorteado: true } : p
+          ));
+        });
+      setModalFriend(assigned);
       showToast('Presente revelado com sucesso.');
       return next;
     });
-  }
 
-  function onShuffle() {
-    setState(prev => {
-      const next = structuredClone(prev) as AppState;
-      next.boxes = shuffle(next.boxes);
-      return next;
-    });
-    showToast("Caixinhas embaralhadas.");
-  }
+      // Após atualizar o estado local, busca novamente a base para
+      // manter dropdown e caixas de presente 100% alinhados ao Supabase
+      try {
+        const { data, error } = await supabase
+          .from('people')
+          .select('*')
+          .order('id', { ascending: true });
 
-  // se já jogou
-  const played = hasDevicePlayed(state);
-  // Contagem de jogadas
-  const total = state.boxes.length;
-  const jogaram = state.revealedLog.length;
-  const faltam = total - jogaram;
+        if (!error && data) {
+          const peopleData = data as Person[];
+          setPeople(peopleData);
+          setState(prev => {
+            const availablePeople = peopleData.filter(p => !p.sorteado);
+            const rebuilt = createInitialStateFromPeople(availablePeople);
+            // preserva o histórico já revelado nesta sessão
+            return {
+              ...rebuilt,
+              revealedLog: prev.revealedLog,
+            };
+          });
+        }
+      } catch (error) {
+        console.error('Erro ao sincronizar pessoas e caixas após revelar amigo:', error);
+      }
+  }
 
   // fundo azul clarinho e título destacado
   return (
@@ -243,12 +285,6 @@ function GiftSvg() {
     }}>
       {/* Efeito de neve natalina */}
       <div style={{position:'fixed',zIndex:0,top:0,left:0,width:'100vw',height:'100vh',pointerEvents:'none',background:'repeating-linear-gradient(0deg,rgba(255,255,255,0.07),rgba(255,255,255,0.07) 2px,transparent 2px,transparent 8px)'}}></div>
-      {played && (
-        <div style={{background:'#ffecec',color:'#c0473d',padding:12,borderRadius:8,margin:'16px auto',maxWidth:420,textAlign:'center',fontWeight:500,boxShadow:'0 2px 12px #0001'}}>
-          Você já jogou!<br/>
-          <span style={{fontSize:14}}>Já jogaram: <b>{jogaram}</b> &nbsp;|&nbsp; Faltam: <b>{faltam}</b></span>
-        </div>
-      )}
       <header style={styles.header}>
         <div style={styles.title}>
           {/* Header destacado com caixa de fundo */}
@@ -280,23 +316,29 @@ function GiftSvg() {
             }}>
               Amigo Secreto — Natal de Chocolate - Família Oliveira
             </h1>
-            {showNameSelect ? (
+            <div style={{display:'flex',gap:8,marginTop:12,alignItems:'center',flexWrap:'wrap',justifyContent:'center'}}>
               <select
-                style={{marginTop:12,padding:'8px 16px',fontSize:16,borderRadius:10,border:'1px solid #b3d8ff'}}
-                defaultValue=""
-                onChange={handleNameSelect}
+                style={{padding:'8px 16px',fontSize:16,borderRadius:10,border:'1px solid #b3d8ff'}}
+                value={pendingPersonId ?? ""}
+                onChange={handleNameChange}
               >
                 <option value="">Selecione quem você é...</option>
                 {people.filter(p => !p.votou).map(p => (
-                  <option key={p.name} value={p.name}>{p.name}</option>
+                  <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
-            ) : (
-              currentName && (
-                <div style={{color:'#1976d2',fontWeight:600,fontSize:18,marginTop:2}}>
-                  Você é: <span style={{color:'#c0473d'}}>{currentName}</span>
-                </div>
-              )
+              <button
+                style={{...styles.button,background:'#1976d2',color:'#fff'}}
+                onClick={handleNameConfirm}
+                disabled={!pendingPersonId}
+              >
+                Confirmar
+              </button>
+            </div>
+            {currentName && (
+              <div style={{color:'#1976d2',fontWeight:600,fontSize:18,marginTop:8}}>
+                Você é: <span style={{color:'#c0473d'}}>{currentName}</span>
+              </div>
             )}
             <div style={{display:'flex',alignItems:'center',gap:16,marginTop:8}}>
               <span style={{
@@ -309,7 +351,6 @@ function GiftSvg() {
               }}>
                 Restantes: {remainingCount} | Revelados: {lockedCount}/{people.length}
               </span>
-              <button style={{...styles.button,background:'#b3d8ff',color:'#1a2a3a',fontWeight:700}} onClick={onShuffle}>Embaralhar caixinhas</button>
             </div>
           </div>
         </div>
@@ -363,7 +404,10 @@ function GiftSvg() {
         </section>
 
         <section className="app-grid" style={styles.grid}>
-          {state.boxes.map(box => {
+          {remainingGifts === 0 || state.boxes.length === 0 ? (
+            <div style={styles.revealedEmpty}>Todos já têm seus amigos. Parabéns!</div>
+          ) : (
+          state.boxes.map(box => {
             const log = state.revealedLog.find(r => r.boxId === box.id);
             const openedForMe = box.locked && log && log.revealerName && currentName && log.revealerName === currentName;
             const isMyBox = log && log.revealerName === currentName;
@@ -375,7 +419,7 @@ function GiftSvg() {
                   ...(box.locked ? styles.cardLocked : null),
                   ...(isMyBox ? styles.cardSelected : null)
                 }}
-                onClick={() => onBoxClick(box.id)}
+                onClick={() => confirmReveal(box.id)} // Directly reveal 'Amigo Chocolate' on click
                 role="button"
                 tabIndex={0}
                 title={box.locked ? "Já aberto" : "Abrir presente"}
@@ -383,13 +427,6 @@ function GiftSvg() {
                 <div className="giftwrap">
                   <div className="gift" style={{position:'relative',background:giftColors[state.boxes.indexOf(box)%giftColors.length],borderRadius:16}}>
                     <GiftSvg key={box.id} />
-                    <div style={{
-                      position: 'absolute',
-                      top: 10,
-                      right: 10,
-                      fontSize: 22,
-                      opacity: 0.85
-                    }}>{giftEmojis[state.boxes.indexOf(box)%giftEmojis.length]}</div>
                   </div>
                   {box.locked && <div style={styles.lockedMark}>ABERTO</div>}
                 </div>
@@ -409,10 +446,11 @@ function GiftSvg() {
                 </div>
               </div>
             );
-          })}
+          }))}
         </section>
 
-        <section style={styles.panel} className="panel">
+        {/* Removed the 'Resultados' section */}
+        {/* <section style={styles.panel} className="panel">
           <h2 style={styles.h2}>Resultados</h2>
           <div style={styles.revealedLog}>
             {state.revealedLog.length === 0 && (
@@ -426,14 +464,34 @@ function GiftSvg() {
               </div>
             ))}
           </div>
-          {/* Nota sobre privacidade */}
           <p style={styles.footerNote}>
             Os resultados ficam salvos apenas em memória nesta sessão.
           </p>
-        </section>
+        </section> */}
       </main>
 
       {toast && <div style={styles.toast}>{toast}</div>}
+      {modalFriend && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
+            <h2 style={{marginTop:0,marginBottom:8}}>Parabéns!</h2>
+            <p style={{fontSize:16,margin:'8px 0'}}>Seu amigo de chocolate é:</p>
+            <p style={{fontSize:22,fontWeight:800,margin:'8px 0',color:'#c0473d'}}>{modalFriend}</p>
+            <p style={{fontSize:13,color:'#6b7280',marginTop:12}}>
+              Esta janela será fechada automaticamente em alguns segundos.<br/>
+              Quando abrir novamente, seu nome e este amigo já não estarão mais disponíveis para sorteio.
+            </p>
+            <div style={{display:'flex',justifyContent:'flex-end',marginTop:16}}>
+              <button
+                style={{...styles.button,background:'#1f8a51',color:'#fff'}}
+                onClick={() => window.location.reload()}
+              >
+                Fechar agora
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
