@@ -44,7 +44,6 @@ export default function App() {
   const [participantes, setParticipantes] = useState<Participante[]>([]);
   // sorteados: conjunto de pessoas disponíveis nas caixinhas
   const [sorteados, setSorteados] = useState<Sorteado[]>([]);
-  const [pendingPersonId, setPendingPersonId] = useState<number | null>(null);
   const [modalFriend, setModalFriend] = useState<string | null>(null);
 
 function createInitialStateFromSorteados(lista: Sorteado[]): AppState {
@@ -136,6 +135,9 @@ function GiftSvg() {
   const [toast, setToast] = useState<string>("");
   const [currentName, setCurrentName] = useState<string>("");
   const [currentPersonId, setCurrentPersonId] = useState<number | null>(null);
+  const [pendingPersonId, setPendingPersonId] = useState<number | null>(null);
+  const [hasRevealed, setHasRevealed] = useState<boolean>(false);
+  const hasSelectedPerson = !!currentPersonId;
 
   function handleNameChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const value = e.target.value;
@@ -147,7 +149,7 @@ function GiftSvg() {
     setPendingPersonId(Number.isNaN(id) ? null : id);
   }
 
-  async function handleNameConfirm() {
+  function handleNameConfirm() {
     if (!pendingPersonId) return;
 
     const person = participantes.find(p => p.id === pendingPersonId);
@@ -157,29 +159,15 @@ function GiftSvg() {
     setCurrentPersonId(person.id);
     setPendingPersonId(null);
 
-    // Marca no banco que esta pessoa já "votou" (escolheu participar)
-    try {
-      await supabase
-        .from('participantes')
-        .update({ votou: true })
-        .eq('id', person.id);
-
-      // Em seguida faz GET em "participantes" para sincronizar dropdown e contadores
-      const { data, error } = await supabase
-        .from('participantes')
-        .select('id, nome, votou')
-        .order('id', { ascending: true });
-
-      if (error || !data) {
-        console.error('Erro ao atualizar participantes após confirmar nome:', error);
-        return;
-      }
-
-      const participantesData = data as Participante[];
-      setParticipantes(participantesData);
-    } catch (error) {
-      console.error('Erro inesperado ao atualizar participantes após confirmar nome:', error);
-    }
+    // Reconstroi as caixinhas excluindo o próprio participante
+    setState(prev => {
+      const disponiveis = sorteados.filter(p => !p.sorteado && p.id !== person.id);
+      const rebuilt = createInitialStateFromSorteados(disponiveis);
+      return {
+        ...rebuilt,
+        revealedLog: prev.revealedLog,
+      };
+    });
   }
 
   // Contadores baseados no Supabase
@@ -194,15 +182,6 @@ function GiftSvg() {
     window.clearTimeout((showToast as unknown as { _t: number })._t);
     (showToast as unknown as { _t: number })._t = window.setTimeout(() => setToast(""), 1700);
   }
-
-  // Fecha automaticamente a "página" após revelar o amigo
-  useEffect(() => {
-    if (!modalFriend) return;
-    const timer = window.setTimeout(() => {
-      window.location.reload();
-    }, 2000);
-    return () => window.clearTimeout(timer);
-  }, [modalFriend]);
 
   // Não mostrar select de nome se já selecionado (sessão desativada a pedido)
   // useEffect(() => {
@@ -257,41 +236,139 @@ function GiftSvg() {
         });
       setModalFriend(assigned);
       showToast('Presente revelado com sucesso.');
+      setHasRevealed(true);
       return next;
     });
 
-      // Após atualizar o estado local, busca novamente a base de "sorteados" para
-      // manter as caixinhas alinhadas ao Supabase (somente quem ainda não foi sorteado)
+    // Marca no banco que esta pessoa participou (votou)
+    // somente depois que ela realmente abriu uma caixinha.
+    if (currentPersonId) {
       try {
+        await supabase
+          .from('participantes')
+          .update({ votou: true })
+          .eq('id', currentPersonId);
+
         const { data, error } = await supabase
-          .from('sorteados')
-          .select('id, nome, sorteado')
+          .from('participantes')
+          .select('id, nome, votou')
           .order('id', { ascending: true });
 
         if (!error && data) {
-          const sorteadosData = data as Sorteado[];
-          setSorteados(sorteadosData);
-          setState(prev => {
-            const disponiveis = sorteadosData.filter(p => !p.sorteado);
-            const rebuilt = createInitialStateFromSorteados(disponiveis);
-            // preserva o histórico já revelado nesta sessão
-            return {
-              ...rebuilt,
-              revealedLog: prev.revealedLog,
-            };
-          });
+          setParticipantes(data as Participante[]);
         }
       } catch (error) {
-        console.error('Erro ao sincronizar sorteados e caixas após revelar amigo:', error);
+        console.error('Erro ao atualizar participantes após revelar amigo:', error);
       }
+    }
+
+    // Após atualizar o estado local, busca novamente a base de "sorteados" para
+    // manter as caixinhas alinhadas ao Supabase (somente quem ainda não foi sorteado)
+    try {
+      const { data, error } = await supabase
+        .from('sorteados')
+        .select('id, nome, sorteado')
+        .order('id', { ascending: true });
+
+      if (!error && data) {
+        const sorteadosData = data as Sorteado[];
+        setSorteados(sorteadosData);
+        setState(prev => {
+          const disponiveis = sorteadosData.filter(p => !p.sorteado && (!currentPersonId || p.id !== currentPersonId));
+          const rebuilt = createInitialStateFromSorteados(disponiveis);
+          // preserva o histórico já revelado nesta sessão
+          return {
+            ...rebuilt,
+            revealedLog: prev.revealedLog,
+          };
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao sincronizar sorteados e caixas após revelar amigo:', error);
+    }
   }
 
+  const canUseGrid = hasSelectedPerson && !hasRevealed;
+  const allSorted = remainingCount === 0 && participantes.length > 0;
+
   // fundo azul clarinho e título destacado
+  // Fase 1: tela tipo "login" para escolher quem é
+  if (!hasSelectedPerson) {
+    return (
+      <div
+        style={{
+          ...styles.body,
+          minHeight: '100vh',
+          backgroundAttachment: 'fixed',
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <div style={styles.loginCard}>
+          <div style={styles.loginBadgeRow}>
+            <span style={styles.loginBadge}>🎄 Amigo Secreto da Família 🎄</span>
+            <span style={styles.loginYear}>Natal {new Date().getFullYear()}</span>
+          </div>
+          <h1 style={styles.loginTitle}>Natal de Chocolate</h1>
+          {allSorted ? (
+            <p style={styles.loginSubtitle}>
+              Todos já foram sorteados. Esta página agora é só para lembrar da festa.
+            </p>
+          ) : (
+            <>
+              <p style={styles.loginSubtitle}>
+                Em 3 passos bem simples:
+              </p>
+              <ol style={{ margin: '4px 0 10px', paddingLeft: 18, fontSize: 13, color: '#4b5563' }}>
+                <li>Escolha seu nome na lista.</li>
+                <li>Clique em "Começar".</li>
+                <li>Na próxima tela, toque em uma caixinha.</li>
+              </ol>
+            </>
+          )}
+
+          {!allSorted && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <select
+                style={{
+                  padding: '10px 14px',
+                  fontSize: 16,
+                  borderRadius: 10,
+                  border: '1px solid #b3d8ff',
+                }}
+                value={pendingPersonId ?? ""}
+                onChange={handleNameChange}
+              >
+                <option value="">Selecione quem você é...</option>
+                {participantes
+                  .filter((p) => !p.votou)
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nome}
+                    </option>
+                  ))}
+              </select>
+              <button
+                style={{ ...styles.button, background: '#16a34a', color: '#fff', width: '100%' }}
+                onClick={handleNameConfirm}
+                disabled={!pendingPersonId}
+              >
+                2️⃣ Começar
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Fase 2: página de amigos / caixinhas
   return (
     <div style={{
       ...styles.body,
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #e3f0ff 0%, #b3d8ff 100%)',
       backgroundAttachment: 'fixed',
       position: 'relative'
     }}>
@@ -303,11 +380,11 @@ function GiftSvg() {
           <div style={{
             background: '#fff',
             borderRadius: 18,
-            boxShadow: '0 2px 16px #0001',
+            boxShadow: '0 14px 40px rgba(15,23,42,0.18)',
             padding: '18px 24px 12px 24px',
             margin: '32px auto 24px auto',
             maxWidth: 600,
-            border: '3px solid #b3d8ff',
+            border: '2px solid rgba(220,38,38,0.18)',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -315,8 +392,8 @@ function GiftSvg() {
           }}>
             <h1 style={{
               ...styles.h1,
-              color: '#1a2a3a',
-              textShadow: '0 2px 16px #b3d8ff88',
+              color: '#991b1b',
+              textShadow: '0 3px 16px rgba(220,38,38,0.35)',
               background: 'none',
               WebkitBackgroundClip: 'unset',
               WebkitTextFillColor: 'unset',
@@ -326,44 +403,49 @@ function GiftSvg() {
               padding: 0,
               margin: 0
             }}>
-              Amigo Secreto — Natal de Chocolate - Família Oliveira
+             🎁 Amigo Secreto — Natal de Chocolate
             </h1>
-            <div style={{display:'flex',gap:8,marginTop:12,alignItems:'center',flexWrap:'wrap',justifyContent:'center'}}>
-              <select
-                style={{padding:'8px 16px',fontSize:16,borderRadius:10,border:'1px solid #b3d8ff'}}
-                value={pendingPersonId ?? ""}
-                onChange={handleNameChange}
-              >
-                <option value="">Selecione quem você é...</option>
-                {participantes.filter(p => !p.votou).map(p => (
-                  <option key={p.id} value={p.id}>{p.nome}</option>
-                ))}
-              </select>
-              <button
-                style={{...styles.button,background:'#1976d2',color:'#fff'}}
-                onClick={handleNameConfirm}
-                disabled={!pendingPersonId}
-              >
-                Confirmar
-              </button>
-            </div>
             {currentName && (
-              <div style={{color:'#1976d2',fontWeight:600,fontSize:18,marginTop:8}}>
-                Você é: <span style={{color:'#c0473d'}}>{currentName}</span>
+              <p style={{ margin: 4, fontSize: 13, color: '#6b7280' }}>
+                2️⃣ Você é: <strong>{currentName}</strong>
+              </p>
+            )}
+            {currentName && !hasRevealed && (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: '10px 16px',
+                  borderRadius: 12,
+                  background: 'linear-gradient(90deg,#0f766e,#047857)',
+                  border: '1px solid rgba(16,185,129,0.6)',
+                  color: '#ecfdf5',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  textAlign: 'center',
+                  boxShadow: '0 10px 25px rgba(5,150,105,0.4)',
+                }}
+              >
+                3️⃣ Agora clique em uma caixinha de presente para descobrir seu amigo de chocolate.
               </div>
             )}
-            <div style={{display:'flex',alignItems:'center',gap:16,marginTop:8}}>
-              <span style={{
-                background:'#e3f0ff',
-                color:'#1976d2',
-                borderRadius:12,
-                padding:'4px 14px',
-                fontWeight:600,
-                fontSize:16
-              }}>
-                Restantes: {remainingCount} | Revelados: {lockedCount}/{participantes.length}
-              </span>
-            </div>
+            {currentName && hasRevealed && (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: '10px 16px',
+                  borderRadius: 12,
+                  background: 'linear-gradient(90deg,#f97316,#ea580c)',
+                  border: '1px solid rgba(249,115,22,0.8)',
+                  color: '#fff7ed',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  textAlign: 'center',
+                  boxShadow: '0 10px 25px rgba(248,113,22,0.5)',
+                }}
+              >
+                Parabéns, {currentName}! Guarde o nome do seu amigo com muito carinho.
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -371,9 +453,9 @@ function GiftSvg() {
       <main style={styles.main}>
         {/* Lista de todos os participantes, mostrando quem já jogou */}
         <section style={{
-          background: '#fff',
+          background: 'linear-gradient(135deg,#ffffff,#fef3f2)',
           borderRadius: 12,
-          boxShadow: '0 2px 12px #0001',
+          boxShadow: '0 12px 30px rgba(15,23,42,0.18)',
           padding: '16px 20px',
           margin: '0 auto 24px auto',
           maxWidth: 480,
@@ -382,14 +464,38 @@ function GiftSvg() {
           gap: 10,
           justifyContent: 'center',
         }}>
-          <h3 style={{width:'100%',textAlign:'center',margin:'0 0 8px 0',fontSize:18,color:'#1976d2'}}>Participantes</h3>
-          {participantes.map((p) => {
-            return (
-              <span key={p.nome} style={{
+          <h3 style={{width:'100%',textAlign:'center',margin:'0 0 8px 0',fontSize:18,color:'#b91c1c',textTransform:'uppercase',letterSpacing:'.08em'}}>Participantes</h3>
+          <div style={{
+            width:'100%',
+            display:'flex',
+            justifyContent:'space-between',
+            alignItems:'center',
+            margin:'0 0 8px 0',
+            flexWrap:'wrap',
+            gap:8,
+          }}>
+         
+            <span style={{
+              background:'rgba(22,163,74,0.06)',
+              color:'#166534',
+              borderRadius:12,
+              padding:'4px 14px',
+              fontWeight:600,
+              fontSize:14,
+              whiteSpace:'nowrap',
+            }}>
+              Restantes: {remainingCount} | Revelados: {lockedCount}/{participantes.length}
+            </span>
+          </div>
+           
+          {participantes.map((p) => (
+            <span
+              key={p.nome}
+              style={{
                 padding: '6px 14px',
                 borderRadius: 8,
-                background: p.votou ? '#b3d8ff' : '#e3f0ff',
-                color: p.votou ? '#1976d2' : '#888',
+                background: p.votou ? 'rgba(22,163,74,0.15)' : 'rgba(185,28,28,0.06)',
+                color: p.votou ? '#166534' : '#6b7280',
                 fontWeight: p.votou ? 700 : 400,
                 fontSize: 15,
                 border: p.votou ? '2px solid #1976d2' : '1px solid #b3d8ff',
@@ -397,11 +503,11 @@ function GiftSvg() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-              }}>
-                {p.votou ? '✔️' : '⏳'} {p.nome}
-              </span>
-            );
-          })}
+              }}
+            >
+              {p.votou ? '🎁' : '⏳'} {p.nome}
+            </span>
+          ))}
         </section>
         <section style={styles.revealedTop} aria-live="polite">
           {state.revealedLog.length === 0 ? (
@@ -414,52 +520,75 @@ function GiftSvg() {
             </>
           )}
         </section>
-
-        <section className="app-grid" style={styles.grid}>
+        <section
+          className="app-grid"
+          style={{
+            ...styles.grid,
+            opacity: canUseGrid ? 1 : 0.5,
+            pointerEvents: canUseGrid ? 'auto' : 'none',
+          }}
+        >
           {remainingGifts === 0 || state.boxes.length === 0 ? (
             <div style={styles.revealedEmpty}>Todos já têm seus amigos. Parabéns!</div>
           ) : (
-          state.boxes.map(box => {
-            const log = state.revealedLog.find(r => r.boxId === box.id);
-            const openedForMe = box.locked && log && log.revealerName && currentName && log.revealerName === currentName;
-            const isMyBox = log && log.revealerName === currentName;
-            return (
-              <div
-                key={box.id}
-                style={{
-                  ...styles.card,
-                  ...(box.locked ? styles.cardLocked : null),
-                  ...(isMyBox ? styles.cardSelected : null)
-                }}
-                onClick={() => confirmReveal(box.id)} // Directly reveal 'Amigo Chocolate' on click
-                role="button"
-                tabIndex={0}
-                title={box.locked ? "Já aberto" : "Abrir presente"}
-              >
-                <div className="giftwrap">
-                  <div className="gift" style={{position:'relative',background:giftColors[state.boxes.indexOf(box)%giftColors.length],borderRadius:16}}>
-                    <GiftSvg key={box.id} />
+            state.boxes.map((box) => {
+              const log = state.revealedLog.find((r) => r.boxId === box.id);
+              const openedForMe =
+                box.locked && log && log.revealerName && currentName && log.revealerName === currentName;
+              const isMyBox = log && log.revealerName === currentName;
+              return (
+                <div
+                  key={box.id}
+                  style={{
+                    ...styles.card,
+                    ...(box.locked ? styles.cardLocked : null),
+                    ...(isMyBox ? styles.cardSelected : null),
+                  }}
+                  onClick={() => confirmReveal(box.id)}
+                  role="button"
+                  tabIndex={0}
+                  title={box.locked ? "Já aberto" : "Abrir presente"}
+                >
+                  <div className="giftwrap">
+                    <div
+                      className="gift"
+                      style={{
+                        position: 'relative',
+                        background:
+                          giftColors[state.boxes.indexOf(box) % giftColors.length],
+                        borderRadius: 16,
+                      }}
+                    >
+                      <GiftSvg key={box.id} />
+                    </div>
+                    {box.locked && <div style={styles.lockedMark}>ABERTO</div>}
                   </div>
-                  {box.locked && <div style={styles.lockedMark}>ABERTO</div>}
-                </div>
 
-                <div style={styles.content}>
-                  {openedForMe ? (
-                    <>
-                      <p style={{ ...styles.reveal, ...styles.revealOpened }}>{box.revealedName}</p>
-                      <p style={styles.hint}>Parabéns — esse é seu amigo secreto!</p>
-                    </>
-                  ) : (
-                    <>
-                      <p style={styles.reveal}>{box.locked ? "Presente aberto (privado)" : "Abrir presente 🎁"}</p>
-                      {/* Mensagem de instrução removida para produção */}
-                    </>
-                  )}
+                  <div style={styles.content}>
+                    {openedForMe ? (
+                      <>
+                        <p style={{ ...styles.reveal, ...styles.revealOpened }}>{box.revealedName}</p>
+                        <p style={styles.hint}>Parabéns — esse é seu amigo secreto!</p>
+                      </>
+                    ) : (
+                      <>
+                        <p style={styles.reveal}>
+                          {box.locked ? "Presente aberto (privado)" : "Abrir presente 🎁"}
+                        </p>
+                      </>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          }))}
+              );
+            })
+          )}
         </section>
+
+        {hasRevealed && (
+          <div style={{textAlign:'center',marginTop:4,fontSize:13,color:'#6b7280'}}>
+            Você já revelou seu amigo de chocolate. Agora é só guardar o segredo e fechar a página quando quiser.
+          </div>
+        )}
 
         {/* Removed the 'Resultados' section */}
         {/* <section style={styles.panel} className="panel">
@@ -490,15 +619,14 @@ function GiftSvg() {
             <p style={{fontSize:16,margin:'8px 0'}}>Seu amigo de chocolate é:</p>
             <p style={{fontSize:22,fontWeight:800,margin:'8px 0',color:'#c0473d'}}>{modalFriend}</p>
             <p style={{fontSize:13,color:'#6b7280',marginTop:12}}>
-              Esta janela será fechada automaticamente em alguns segundos.<br/>
-              Quando abrir novamente, seu nome e este amigo já não estarão mais disponíveis para sorteio.
+              Guarde esse nome com carinho. Depois é só fechar esta janela ou a página.
             </p>
             <div style={{display:'flex',justifyContent:'flex-end',marginTop:16}}>
               <button
                 style={{...styles.button,background:'#1f8a51',color:'#fff'}}
-                onClick={() => window.location.reload()}
+                onClick={() => setModalFriend(null)}
               >
-                Fechar agora
+                Fechar
               </button>
             </div>
           </div>
@@ -524,10 +652,6 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundRepeat: 'repeat, no-repeat',
     backgroundPosition: '0 0, right top',
     backgroundSize: '140px, 320px',
-    background:
-      "radial-gradient(900px 500px at 18% 0%, #fffdf9 0%, transparent 70%)," +
-      "radial-gradient(900px 500px at 82% 0%, #fffcf5 0%, transparent 70%)," +
-      "linear-gradient(180deg, #fffdfc, #fffefa)",
   },
   header: {
     maxWidth: 1100,
@@ -562,8 +686,16 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: "0 6px 18px rgba(122,43,43,0.06)",
     fontWeight: 700,
   },
-  main: { flex: 1, width: '100%', maxWidth: 1100, margin: "0 auto", padding: "12px 18px 28px", display: "grid", gap: 16 },
-  grid: { display: "grid", gap: 14 },
+  main: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 1200,
+    margin: "0 auto",
+    padding: "16px clamp(12px, 4vw, 32px) 32px",
+    display: "grid",
+    gap: 20,
+  },
+  grid: { display: "grid", gap: 16 },
   revealedTop: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', padding: '8px 6px', width: '100%', marginBottom: 6 },
   revealerChip: { background: 'linear-gradient(90deg,#fff1f1,#fff7f7)', padding: '8px 12px', borderRadius: 999, boxShadow: '0 6px 18px rgba(0,0,0,0.04)', fontWeight: 700, color: '#8b2d2d' },
   revealedEmpty: { color: '#6b7280', fontSize: 14, padding: '6px 10px' },
@@ -593,7 +725,14 @@ const styles: Record<string, React.CSSProperties> = {
     background: "linear-gradient(135deg, #fffaf8, #fff7f3)",
     position: "relative",
   },
-  gift: { width: "100%", maxWidth: 320, height: "100%", display: "flex", alignItems: "center", justifyContent: "center" },
+  gift: {
+    width: "100%",
+    maxWidth: 320,
+    height: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   lockedMark: {
     position: "absolute",
     top: 10,
@@ -699,5 +838,60 @@ const styles: Record<string, React.CSSProperties> = {
     transform: 'translate(-50%, -50%)',
     fontSize: 18,
     color: '#6b7280',
+  },
+  loginCard: {
+    background: 'linear-gradient(145deg,#ffffff,#fff7ed)',
+    borderRadius: 18,
+    padding: 22,
+    maxWidth: 420,
+    width: '100%',
+    boxShadow: '0 20px 45px rgba(15,23,42,0.35)',
+    border: '1px solid rgba(220,38,38,0.25)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 14,
+  },
+  loginBadgeRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  loginBadge: {
+    padding: '4px 10px',
+    borderRadius: 999,
+    background: 'linear-gradient(90deg,#b91c1c,#ea580c)',
+    color: '#fef2f2',
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '.09em',
+    textTransform: 'uppercase',
+    boxShadow: '0 6px 16px rgba(185,28,28,0.5)',
+  },
+  loginYear: {
+    fontSize: 11,
+    fontWeight: 600,
+    color: '#9ca3af',
+  },
+  loginTitle: {
+    margin: 0,
+    fontSize: 26,
+    fontWeight: 800,
+    color: '#991b1b',
+    textAlign: 'center',
+  },
+  loginSubtitle: {
+    margin: 0,
+    fontSize: 14,
+    color: '#4b5563',
+    textAlign: 'center',
+  },
+  loginInfo: {
+    margin: 0,
+    marginTop: 6,
+    fontSize: 12,
+    color: '#6b7280',
+    textAlign: 'center',
   },
 };

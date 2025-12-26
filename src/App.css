@@ -1,134 +1,28 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
-}
-
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
-}
-
-/* Grid layout for AmigoChocolate app: 3 columns desktop, responsive to 2/1 on smaller screens */
+/* Layout principal da grade das caixinhas, mobile-first e fluido */
 .app-grid {
   display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(4, 1fr);
-  align-items: start;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: stretch;
 }
 
-/* tighten gift card size so 4 columns fit nicely on large screens */
-.app-grid > div { min-width: 160px; }
-
-/* 3 columns for medium large screens */
-@media (max-width: 1200px) {
-  .app-grid { grid-template-columns: repeat(3, 1fr); }
+@media (min-width: 1024px) {
+  .app-grid {
+    gap: 18px;
+  }
 }
 
-/* 2 columns for tablet */
-@media (max-width: 900px) {
-  .app-grid { grid-template-columns: repeat(2, 1fr); }
+/* Pequenos ajustes para telas muito estreitas */
+@media (max-width: 480px) {
+  .app-grid {
+    gap: 12px;
+  }
 }
 
-/* 1 column for small phones */
-@media (max-width: 520px) {
-  .app-grid { grid-template-columns: 1fr; }
-}
-
-/* Page-wide subtle snow and festivity accents */
+/* Fundo geral com clima de festa de Natal, claro e suave */
 body {
-  background-image: radial-gradient(circle at 10% 10%, rgba(255,255,255,0.9) 0.4px, transparent 0.6px),
-                    radial-gradient(circle at 50% 30%, rgba(255,255,255,0.85) 0.6px, transparent 1px),
-                    radial-gradient(circle at 80% 20%, rgba(255,255,255,0.9) 0.5px, transparent 0.8px);
-  background-repeat: repeat;
-  background-size: 120px 120px, 180px 180px, 200px 200px;
-}
-
-@media (max-width: 420px) {
-  .app-grid { gap: 10px; }
-  #root { padding: 1rem; }
-}
-
-/* Responsive adjustments for mobile devices */
-.giftwrap {
-  height: 150px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 12px;
-  background: linear-gradient(135deg, #fffaf8, #fff7f3);
-  position: relative;
-}
-.gift {
-  width: 100%;
-  max-width: 320px;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(10,12,12,0.28);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  z-index: 60;
-}
-.modal {
-  background: #fffefc;
-  padding: 18px;
-  border-radius: 12px;
-  box-shadow: 0 18px 50px rgba(11,22,33,0.18);
-  max-width: 540px;
-  width: 100%;
-}
-
-.responsive-input { padding: 10px 12px; font-size: 15px; border-radius: 10px; min-width: 120px; }
-.responsive-button { padding: 10px 12px; border-radius: 12px; font-weight: 700; }
-
-/* Mobile-specific tweaks */
-@media (max-width: 520px) {
-  .giftwrap { height: 110px; padding: 8px; }
-  .modal { max-width: 100%; height: 100%; border-radius: 0; padding: 14px; display:flex; flex-direction:column; justify-content:space-between; }
-  .modal .actions { display:flex; gap:8px; justify-content:flex-end; }
-  .responsive-input { font-size: 16px; padding: 12px; }
-  .responsive-button { font-size: 15px; padding: 12px 14px; }
-  .app-grid > div { min-width: 0; }
-  .panel { padding: 12px; }
+  background:
+    radial-gradient(900px 500px at 15% 0%, #fff7ed 0%, transparent 70%),
+    radial-gradient(900px 500px at 85% 0%, #eef2ff 0%, transparent 70%),
+    linear-gradient(180deg, #fefce8, #f9fafb 45%, #fef9c3 100%);
 }
